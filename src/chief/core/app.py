@@ -5,6 +5,7 @@ from chief.models.ollama import OllamaProvider
 from chief.core.identity import SYSTEM_IDENTITY
 from chief.memory.manager import MemoryManager
 from chief.memory.sqlite import SQLiteMemoryStore
+from chief.memory.commands import MemoryCommandParser
 
 app = FastAPI(
     title="CHIEF",
@@ -15,6 +16,7 @@ app = FastAPI(
 model_provider = OllamaProvider()
 memory_store = SQLiteMemoryStore()
 memory_manager = MemoryManager(memory_store)
+memory_command_parser = MemoryCommandParser()
 
 
 class ChatRequest(BaseModel):
@@ -49,6 +51,27 @@ def system_info() -> dict[str, str]:
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(chat_request: ChatRequest) -> ChatResponse:
+    memory_command = memory_command_parser.parse(
+        chat_request.message
+    )
+
+    if memory_command is not None:
+        memory = memory_manager.remember(
+            memory_command.content,
+            source_type="user",
+            source_description="Explicit remember command",
+            confidence=1.0,
+            importance=0.8,
+        )
+
+        return ChatResponse(
+            response=(
+                f"Memory saved: {memory.content}"
+            ),
+            provider="chief-memory",
+            model="deterministic",
+        )
+
     memory_context = memory_manager.build_context(
         chat_request.message
     )
