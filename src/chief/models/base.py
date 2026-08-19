@@ -17,6 +17,10 @@ class ModelProvider(ABC):
     def name(self) -> str:
         """Return the provider's unique name."""
 
-    @abstractmethod
-    def generate(self, prompt: str) -> ModelResponse:
-        """Generate a response for the supplied prompt."""
+@abstractmethod
+def generate(
+    self,
+    prompt: str,
+    system_prompt: str | None = None,
+) -> ModelResponse:
+    """Generate a response using an optional system prompt."""

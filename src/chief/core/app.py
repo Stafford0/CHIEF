@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from chief.models.ollama import OllamaProvider
-
+from chief.core.identity import SYSTEM_IDENTITY
 
 app = FastAPI(
     title="CHIEF",
@@ -45,7 +45,10 @@ def system_info() -> dict[str, str]:
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(chat_request: ChatRequest) -> ChatResponse:
-    result = model_provider.generate(chat_request.message)
+    result = model_provider.generate(
+    prompt=chat_request.message,
+    system_prompt=SYSTEM_IDENTITY,
+)
 
     return ChatResponse(
         response=result.content,

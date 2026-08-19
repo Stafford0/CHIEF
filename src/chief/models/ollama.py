@@ -21,14 +21,21 @@ class OllamaProvider(ModelProvider):
     def name(self) -> str:
         return "ollama"
 
-    def generate(self, prompt: str) -> ModelResponse:
-        payload = json.dumps(
-            {
-                "model": self.model,
-                "prompt": prompt,
-                "stream": False,
-            }
-        ).encode("utf-8")
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+    ) -> ModelResponse:
+        payload_data = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+        }
+
+        if system_prompt:
+            payload_data["system"] = system_prompt
+
+        payload = json.dumps(payload_data).encode("utf-8")
 
         http_request = request.Request(
             f"{self.base_url}/api/generate",
