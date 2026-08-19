@@ -1,11 +1,17 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from chief.models.ollama import OllamaProvider
 from chief.core.identity import SYSTEM_IDENTITY
+from chief.memory.commands import (
+    CorrectMemoryCommand,
+    ForgetMemoryCommand,
+    MemoryCommand,
+    MemoryCommandParser,
+)
 from chief.memory.manager import MemoryManager
 from chief.memory.sqlite import SQLiteMemoryStore
-from chief.memory.commands import MemoryCommandParser
+from chief.models.ollama import OllamaProvider
+
 
 app = FastAPI(
     title="CHIEF",
@@ -55,7 +61,7 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
         chat_request.message
     )
 
-    if memory_command is not None:
+    if isinstance(memory_command, MemoryCommand):
         memory = memory_manager.remember(
             memory_command.content,
             source_type="user",
@@ -65,9 +71,81 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
         )
 
         return ChatResponse(
+            response=f"Memory saved: {memory.content}",
+            provider="chief-memory",
+            model="deterministic",
+        )
+
+    if isinstance(memory_command, CorrectMemoryCommand):
+        try:
+            old_memory = memory_manager.resolve_exact(
+                memory_command.old_content
+            )
+        except ValueError:
+            return ChatResponse(
+                response=(
+                    "I found multiple active memories matching "
+                    "that exact content, so I did not change anything."
+                ),
+                provider="chief-memory",
+                model="deterministic",
+            )
+
+        if old_memory is None:
+            return ChatResponse(
+                response=(
+                    "I could not find an active memory matching "
+                    "that exact content, so I did not change anything."
+                ),
+                provider="chief-memory",
+                model="deterministic",
+            )
+
+        new_memory = memory_manager.correct(
+            old_memory,
+            memory_command.new_content,
+            source_type="user",
+            source_description="Explicit user correction",
+            confidence=1.0,
+        )
+
+        return ChatResponse(
             response=(
-                f"Memory saved: {memory.content}"
+                f"Memory corrected: {new_memory.content}"
             ),
+            provider="chief-memory",
+            model="deterministic",
+        )
+
+    if isinstance(memory_command, ForgetMemoryCommand):
+        try:
+            memory = memory_manager.resolve_exact(
+                memory_command.content
+            )
+        except ValueError:
+            return ChatResponse(
+                response=(
+                    "I found multiple active memories matching "
+                    "that exact content, so I did not forget anything."
+                ),
+                provider="chief-memory",
+                model="deterministic",
+            )
+
+        if memory is None:
+            return ChatResponse(
+                response=(
+                    "I could not find an active memory matching "
+                    "that exact content, so I did not forget anything."
+                ),
+                provider="chief-memory",
+                model="deterministic",
+            )
+
+        memory_manager.forget(memory)
+
+        return ChatResponse(
+            response=f"Memory forgotten: {memory.content}",
             provider="chief-memory",
             model="deterministic",
         )

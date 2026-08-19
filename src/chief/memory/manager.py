@@ -39,6 +39,89 @@ class MemoryManager:
 
         return self.store.save(memory)
 
+    def correct(
+        self,
+        old_memory: MemoryRecord,
+        new_content: str,
+        *,
+        source_type: str = "user",
+        source_id: str | None = None,
+        source_description: str | None = None,
+        confidence: float = 1.0,
+        importance: float | None = None,
+        tags: list[str] | None = None,
+    ) -> MemoryRecord:
+        """Replace an active memory while preserving its history."""
+
+        stored_memory = self.store.get(old_memory.id)
+
+        if stored_memory is None:
+            raise ValueError(
+                "Cannot correct a memory that does not exist."
+            )
+
+        if not stored_memory.active:
+            raise ValueError(
+                "Cannot correct an inactive memory."
+            )
+
+        old_memory = stored_memory
+
+        new_memory = MemoryRecord(
+            memory_type=old_memory.memory_type,
+            content=new_content,
+            source=MemorySource(
+                source_type=source_type,
+                source_id=source_id,
+                description=source_description,
+            ),
+            confidence=confidence,
+            importance=(
+                old_memory.importance
+                if importance is None
+                else importance
+            ),
+            tags=old_memory.tags if tags is None else tags,
+            supersedes=old_memory.id,
+        )
+
+        self.store.save(new_memory)
+        self.store.deactivate(old_memory.id)
+
+        return new_memory
+
+    def forget(
+        self,
+        memory: MemoryRecord,
+    ) -> bool:
+        """Deactivate a memory so CHIEF no longer recalls it."""
+
+        return self.store.deactivate(memory.id)
+
+    def resolve_exact(
+        self,
+        content: str,
+    ) -> MemoryRecord | None:
+        """Resolve exactly one active memory by its full content."""
+
+        target = content.strip().casefold()
+
+        matches = [
+            memory
+            for memory in self.store.list_active(limit=1000)
+            if memory.content.strip().casefold() == target
+        ]
+
+        if len(matches) == 0:
+            return None
+
+        if len(matches) > 1:
+            raise ValueError(
+                "Multiple active memories match that content."
+            )
+
+        return matches[0]
+
     def recall(
         self,
         query: str,
