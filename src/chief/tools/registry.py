@@ -166,3 +166,22 @@ def create_read_only_registry(
     registry.register(SystemStatusTool())
     registry.register(ProcessStatusTool())
     return registry
+
+
+def create_standard_registry(
+    allowed_roots: list[str],
+    *,
+    policy: ToolPolicy | None = None,
+    audit_log: AuditLog | None = None,
+) -> ToolRegistry:
+    """Build CHIEF's standard registry, including the approval-only shell tool."""
+
+    from chief.tools.shell import ShellCommandTool
+
+    registry = create_read_only_registry(
+        allowed_roots,
+        policy=policy,
+        audit_log=audit_log,
+    )
+    registry.register(ShellCommandTool(allowed_roots))
+    return registry
