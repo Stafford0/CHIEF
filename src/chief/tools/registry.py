@@ -156,7 +156,6 @@ def create_read_only_registry(
     """Build a registry containing CHIEF's standard read-only tools."""
 
     from chief.tools.filesystem import ListDirectoryTool, ReadFileTool, SearchFilesTool
-    from chief.tools.powershell import PowerShellReadTool
     from chief.tools.process_status import ProcessStatusTool
     from chief.tools.system_status import SystemStatusTool
 
@@ -166,7 +165,6 @@ def create_read_only_registry(
     registry.register(SearchFilesTool(allowed_roots))
     registry.register(SystemStatusTool())
     registry.register(ProcessStatusTool())
-    registry.register(PowerShellReadTool(allowed_roots))
     return registry
 
 
@@ -176,9 +174,9 @@ def create_standard_registry(
     policy: ToolPolicy | None = None,
     audit_log: AuditLog | None = None,
 ) -> ToolRegistry:
-    """Build CHIEF's standard registry, including approval-only execution tools."""
+    """Build CHIEF's standard registry, including guarded execution tools."""
 
-    from chief.tools.powershell import PowerShellCommandTool
+    from chief.tools.powershell import PowerShellCommandTool, PowerShellReadTool
     from chief.tools.shell import ShellCommandTool
 
     registry = create_read_only_registry(
@@ -186,6 +184,7 @@ def create_standard_registry(
         policy=policy,
         audit_log=audit_log,
     )
-    registry.register(ShellCommandTool(allowed_roots))
+    registry.register(PowerShellReadTool(allowed_roots))
     registry.register(PowerShellCommandTool(allowed_roots))
+    registry.register(ShellCommandTool(allowed_roots))
     return registry
