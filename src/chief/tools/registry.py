@@ -1,11 +1,20 @@
+from chief.audit.log import AuditEvent, AuditLog
+from chief.guard.policy import PolicyDecision, ToolPolicy
 from chief.tools.base import Tool, ToolDefinition, ToolResult
 
 
 class ToolRegistry:
-    """Whitelist and execution gateway for CHIEF tools."""
+    """Whitelist, permission gate, and execution gateway for CHIEF tools."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        policy: ToolPolicy | None = None,
+        audit_log: AuditLog | None = None,
+    ) -> None:
         self._tools: dict[str, Tool] = {}
+        self.policy = policy or ToolPolicy()
+        self.audit_log = audit_log or AuditLog()
 
     def register(self, tool: Tool) -> None:
         """Register a tool with CHIEF."""
@@ -55,30 +64,82 @@ class ToolRegistry:
         self,
         name: str,
         arguments: dict,
+        *,
+        approved: bool = False,
     ) -> ToolResult:
-        """Execute a registered tool."""
+        """Evaluate policy, execute a registered tool, and audit the attempt."""
 
         tool = self.get(name)
 
         if tool is None:
-            return ToolResult(
+            result = ToolResult(
                 success=False,
                 content="Tool execution refused.",
                 error=(
                     f"Tool '{name}' is not registered."
                 ),
             )
+            self.audit_log.record(
+                AuditEvent(
+                    tool_name=name,
+                    approved=approved,
+                    decision=PolicyDecision.DENY.value,
+                    success=False,
+                    error=result.error,
+                )
+            )
+            return result
 
-        if tool.definition.requires_approval:
-            return ToolResult(
+        policy_result = self.policy.evaluate(
+            tool.definition,
+            approved=approved,
+        )
+
+        if policy_result.decision == PolicyDecision.REQUIRE_APPROVAL:
+            result = ToolResult(
                 success=False,
                 content="Tool execution requires approval.",
-                error=(
-                    f"Tool '{name}' requires user approval."
-                ),
+                error=policy_result.reason,
             )
+            self.audit_log.record(
+                AuditEvent(
+                    tool_name=name,
+                    approved=approved,
+                    decision=policy_result.decision.value,
+                    success=False,
+                    error=result.error,
+                )
+            )
+            return result
 
-        return tool.run(arguments)
+        if policy_result.decision == PolicyDecision.DENY:
+            result = ToolResult(
+                success=False,
+                content="Tool execution refused.",
+                error=policy_result.reason,
+            )
+            self.audit_log.record(
+                AuditEvent(
+                    tool_name=name,
+                    approved=approved,
+                    decision=policy_result.decision.value,
+                    success=False,
+                    error=result.error,
+                )
+            )
+            return result
+
+        result = tool.run(arguments)
+        self.audit_log.record(
+            AuditEvent(
+                tool_name=name,
+                approved=approved,
+                decision=policy_result.decision.value,
+                success=result.success,
+                error=result.error,
+            )
+        )
+        return result
 
     def count(self) -> int:
         """Return the number of registered tools."""
