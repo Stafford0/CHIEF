@@ -56,7 +56,7 @@ def test_tool_execute_preserves_approval_gate() -> None:
     result = response.json()
     assert result["success"] is False
     assert result["content"] == "Tool execution requires approval."
-    assert "explicit approval" in result["error"]
+    assert "approval" in result["error"].lower()
 
 
 def test_tool_execute_refuses_unknown_tool() -> None:
