@@ -1,7 +1,9 @@
+from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from chief.core.identity import SYSTEM_IDENTITY
 from chief.core.session_store import SessionStore
@@ -14,6 +16,7 @@ from chief.memory.commands import (
 from chief.memory.manager import MemoryManager
 from chief.memory.sqlite import SQLiteMemoryStore
 from chief.models.ollama import OllamaProvider
+from chief.tools.registry import ToolRegistry, create_standard_registry
 
 
 app = FastAPI(
@@ -30,6 +33,9 @@ memory_command_parser = MemoryCommandParser()
 
 session_store = SessionStore()
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+tool_registry: ToolRegistry = create_standard_registry([str(PROJECT_ROOT)])
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -41,6 +47,26 @@ class ChatResponse(BaseModel):
     provider: str
     model: str
     session_id: UUID
+
+
+class ToolDefinitionResponse(BaseModel):
+    name: str
+    description: str
+    risk: str
+    requires_approval: bool
+
+
+class ToolExecuteRequest(BaseModel):
+    name: str = Field(min_length=1)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    approved: bool = False
+
+
+class ToolExecuteResponse(BaseModel):
+    success: bool
+    content: str
+    data: dict[str, Any]
+    error: str | None = None
 
 
 @app.get("/health")
@@ -61,6 +87,39 @@ def system_info() -> dict[str, str]:
         "milestone": "CHIEF ZERO",
         "environment": "development",
     }
+
+
+@app.get("/tools", response_model=list[ToolDefinitionResponse])
+def list_tools() -> list[ToolDefinitionResponse]:
+    """List tools currently available through CHIEF's guarded registry."""
+
+    return [
+        ToolDefinitionResponse(
+            name=definition.name,
+            description=definition.description,
+            risk=definition.risk.value,
+            requires_approval=definition.requires_approval,
+        )
+        for definition in tool_registry.definitions()
+    ]
+
+
+@app.post("/tools/execute", response_model=ToolExecuteResponse)
+def execute_tool(tool_request: ToolExecuteRequest) -> ToolExecuteResponse:
+    """Execute a tool through CHIEF's policy and audit gates."""
+
+    result = tool_registry.execute(
+        tool_request.name,
+        tool_request.arguments,
+        approved=tool_request.approved,
+    )
+
+    return ToolExecuteResponse(
+        success=result.success,
+        content=result.content,
+        data=result.data,
+        error=result.error,
+    )
 
 
 @app.post("/chat", response_model=ChatResponse)
