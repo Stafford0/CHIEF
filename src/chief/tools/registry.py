@@ -145,3 +145,24 @@ class ToolRegistry:
         """Return the number of registered tools."""
 
         return len(self._tools)
+
+
+def create_read_only_registry(
+    allowed_roots: list[str],
+    *,
+    policy: ToolPolicy | None = None,
+    audit_log: AuditLog | None = None,
+) -> ToolRegistry:
+    """Build a registry containing CHIEF's standard read-only tools."""
+
+    from chief.tools.filesystem import ListDirectoryTool, ReadFileTool, SearchFilesTool
+    from chief.tools.process_status import ProcessStatusTool
+    from chief.tools.system_status import SystemStatusTool
+
+    registry = ToolRegistry(policy=policy, audit_log=audit_log)
+    registry.register(ListDirectoryTool(allowed_roots))
+    registry.register(ReadFileTool(allowed_roots))
+    registry.register(SearchFilesTool(allowed_roots))
+    registry.register(SystemStatusTool())
+    registry.register(ProcessStatusTool())
+    return registry
