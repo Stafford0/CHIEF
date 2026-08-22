@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from chief.core.identity import SYSTEM_IDENTITY
@@ -20,6 +21,18 @@ app = FastAPI(
     title="CHIEF",
     description="Cognitive Hub for Intelligence, Execution & Foresight",
     version="0.0.1",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    ],
+    allow_origin_regex=r"http://(?:192\.168|10\.\d|172\.(?:1[6-9]|2\d|3[01]))\.\d+\.\d+:5173",
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 model_provider = OllamaProvider()
