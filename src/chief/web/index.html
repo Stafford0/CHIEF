@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CHIEF</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #090d12; color: #e8edf3; display: grid; place-items: center; }
+    main { width: min(880px, 100%); height: min(820px, 100vh); display: grid; grid-template-rows: auto 1fr auto; padding: 24px; }
+    header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #26303d; padding-bottom: 16px; }
+    h1 { font-size: 1rem; letter-spacing: .2em; margin: 0; }
+    #status { color: #75e0a7; font-size: .8rem; }
+    #messages { overflow-y: auto; padding: 24px 0; display: flex; flex-direction: column; gap: 14px; }
+    .message { max-width: 82%; padding: 13px 16px; border-radius: 14px; line-height: 1.45; white-space: pre-wrap; }
+    .user { align-self: end; background: #2563eb; }
+    .chief { align-self: start; background: #18202b; border: 1px solid #2a3746; }
+    .actions { display: flex; gap: 10px; margin-top: 12px; }
+    form { display: grid; grid-template-columns: 1fr auto; gap: 10px; border-top: 1px solid #26303d; padding-top: 16px; }
+    input, button { border: 1px solid #344256; border-radius: 10px; font: inherit; }
+    input { padding: 13px 15px; background: #111821; color: inherit; }
+    button { padding: 11px 16px; background: #2563eb; color: white; cursor: pointer; }
+    button.danger { background: #7f1d1d; }
+    button:disabled { opacity: .55; cursor: wait; }
+    footer { color: #7f8b99; font-size: .72rem; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <main>
+    <header><h1>CHIEF</h1><span id="status">ONLINE</span></header>
+    <section id="messages" aria-live="polite">
+      <div class="message chief">CHIEF is online. Try “show processes” or “run the tests.”</div>
+    </section>
+    <div>
+      <form id="chat-form">
+        <input id="message" autocomplete="off" placeholder="Message CHIEF…" aria-label="Message CHIEF" required>
+        <button id="send" type="submit">Send</button>
+      </form>
+      <footer id="session">New session</footer>
+    </div>
+  </main>
+  <script>
+    const form = document.querySelector('#chat-form');
+    const input = document.querySelector('#message');
+    const send = document.querySelector('#send');
+    const messages = document.querySelector('#messages');
+    const sessionLabel = document.querySelector('#session');
+    let sessionId = null;
+
+    function addMessage(text, role, data = null) {
+      const bubble = document.createElement('div');
+      bubble.className = `message ${role}`;
+      bubble.textContent = text;
+      if (data?.pending_action === 'approve_or_cancel') {
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+        const approve = document.createElement('button');
+        approve.textContent = 'Approve';
+        approve.onclick = () => sendMessage('approve');
+        const cancel = document.createElement('button');
+        cancel.className = 'danger';
+        cancel.textContent = 'Cancel';
+        cancel.onclick = () => sendMessage('cancel');
+        actions.append(approve, cancel);
+        bubble.append(actions);
+      }
+      messages.append(bubble);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    async function sendMessage(message) {
+      addMessage(message, 'user');
+      send.disabled = true;
+      input.disabled = true;
+      try {
+        const body = { message };
+        if (sessionId) body.session_id = sessionId;
+        const response = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const contentType = response.headers.get('content-type') || '';
+        const data = contentType.includes('application/json')
+          ? await response.json()
+          : { detail: await response.text() };
+        if (!response.ok) throw new Error(data.detail || `Request failed (${response.status})`);
+        sessionId = data.session_id;
+        sessionLabel.textContent = `Session ${sessionId}`;
+        addMessage(data.response, 'chief', data);
+      } catch (error) {
+        addMessage(`Unable to complete the request: ${error.message}`, 'chief');
+      } finally {
+        send.disabled = false;
+        input.disabled = false;
+        input.focus();
+      }
+    }
+
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      const message = input.value.trim();
+      if (!message) return;
+      input.value = '';
+      sendMessage(message);
+    });
+  </script>
+</body>
+</html>

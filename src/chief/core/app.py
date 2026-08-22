@@ -3,10 +3,12 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from chief.core.identity import SYSTEM_IDENTITY
 from chief.core.session_store import SessionStore
+from chief.core.tool_planner import DeterministicToolPlanner, PendingAction
 from chief.memory.commands import (
     CorrectMemoryCommand,
     ForgetMemoryCommand,
@@ -25,7 +27,7 @@ app = FastAPI(
     version="0.0.1",
 )
 
-model_provider = OllamaProvider()
+model_provider = OllamaProvider(model="qwen3:4b")
 
 memory_store = SQLiteMemoryStore()
 memory_manager = MemoryManager(memory_store)
@@ -34,7 +36,9 @@ memory_command_parser = MemoryCommandParser()
 session_store = SessionStore()
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+WEB_UI_PATH = Path(__file__).resolve().parents[1] / "web" / "index.html"
 tool_registry: ToolRegistry = create_standard_registry([str(PROJECT_ROOT)])
+tool_planner = DeterministicToolPlanner()
 
 
 class ChatRequest(BaseModel):
@@ -47,6 +51,9 @@ class ChatResponse(BaseModel):
     provider: str
     model: str
     session_id: UUID
+    status: str = "completed"
+    pending_action: str | None = None
+    tool_description: str | None = None
 
 
 class ToolDefinitionResponse(BaseModel):
@@ -76,6 +83,13 @@ def health() -> dict[str, str]:
         "system": "CHIEF",
         "version": "0.0.1",
     }
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def chat_ui() -> HTMLResponse:
+    """Serve CHIEF's lightweight local chat interface."""
+
+    return HTMLResponse(WEB_UI_PATH.read_text(encoding="utf-8"))
 
 
 @app.get("/system")
@@ -130,6 +144,36 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
         )
     except KeyError:
         session = session_store.create()
+
+    pending_action = tool_planner.pending_action(chat_request.message)
+    if session.pending_tool_call is not None and pending_action is not None:
+        pending_call = session.pending_tool_call
+        session.pending_tool_call = None
+
+        if pending_action == PendingAction.REJECT:
+            response_text = f"Cancelled: I did not {pending_call.description}."
+            response_status = "cancelled"
+        else:
+            result = tool_registry.execute(
+                pending_call.tool_name,
+                pending_call.arguments,
+                approved=True,
+            )
+            response_text = result.content
+            if result.error and not result.success:
+                response_text = f"{result.content} {result.error}"
+            response_status = "completed" if result.success else "failed"
+
+        session.add_message("user", chat_request.message)
+        session.add_message("assistant", response_text)
+        return ChatResponse(
+            response=response_text,
+            provider="chief-tools",
+            model="deterministic",
+            session_id=session.id,
+            status=response_status,
+            tool_description=pending_call.description,
+        )
 
     memory_command = memory_command_parser.parse(
         chat_request.message
@@ -274,6 +318,42 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
             session_id=session.id,
         )
 
+    planned_call = tool_planner.plan(chat_request.message)
+    if planned_call is not None:
+        result = tool_registry.execute(
+            planned_call.tool_name,
+            planned_call.arguments,
+        )
+
+        if result.content == "Tool execution requires approval.":
+            session.pending_tool_call = planned_call
+            response_text = (
+                f"Approval required to {planned_call.description}. "
+                "Reply 'approve' to run it or 'cancel' to discard it."
+            )
+            response_status = "pending_approval"
+        else:
+            response_text = result.content
+            if result.error and not result.success:
+                response_text = f"{result.content} {result.error}"
+            response_status = "completed" if result.success else "failed"
+
+        session.add_message("user", chat_request.message)
+        session.add_message("assistant", response_text)
+        return ChatResponse(
+            response=response_text,
+            provider="chief-tools",
+            model="deterministic",
+            session_id=session.id,
+            status=response_status,
+            pending_action=(
+                "approve_or_cancel"
+                if response_status == "pending_approval"
+                else None
+            ),
+            tool_description=planned_call.description,
+        )
+
     memory_context = memory_manager.build_context(
         chat_request.message
     )
@@ -290,10 +370,22 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
 
     system_prompt = "\n\n".join(context_parts)
 
-    result = model_provider.generate(
-        prompt=chat_request.message,
-        system_prompt=system_prompt,
-    )
+    try:
+        result = model_provider.generate(
+            prompt=chat_request.message,
+            system_prompt=system_prompt,
+        )
+    except RuntimeError as exc:
+        response_text = str(exc)
+        session.add_message("user", chat_request.message)
+        session.add_message("assistant", response_text)
+        return ChatResponse(
+            response=response_text,
+            provider="chief-system",
+            model="unavailable",
+            session_id=session.id,
+            status="unavailable",
+        )
 
     session.add_message(
         "user",

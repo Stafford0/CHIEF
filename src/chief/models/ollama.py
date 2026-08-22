@@ -51,10 +51,25 @@ class OllamaProvider(ModelProvider):
             ) as response:
                 data = json.loads(response.read().decode("utf-8"))
 
+        except TimeoutError as exc:
+            raise RuntimeError(
+                f"Ollama exceeded the {self.timeout:.0f}-second response timeout."
+            ) from exc
+
+        except error.HTTPError as exc:
+            raise RuntimeError(
+                f"Ollama returned HTTP error {exc.code}: {exc.reason}"
+            ) from exc
+
         except error.URLError as exc:
             raise RuntimeError(
                 "CHIEF could not connect to Ollama. "
                 "Verify that the Ollama service is running."
+            ) from exc
+
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                "Ollama returned a response CHIEF could not decode."
             ) from exc
 
         content = data.get("response")
