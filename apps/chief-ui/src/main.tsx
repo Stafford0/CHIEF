@@ -6,7 +6,6 @@ import {
   RefreshCw, Send, Server, Settings, ShieldCheck, Smartphone, TerminalSquare,
   Wrench, Zap, Crosshair, Layers3, ScanLine, FolderGit2, Gauge, Router,
 } from "lucide-react";
-import "./styles.css";
 
 type Health = { status: string; system: string; version: string };
 type SystemInfo = { name: string; full_name: string; version: string; milestone: string; environment: string };
