@@ -115,6 +115,59 @@ def system_info() -> dict[str, str]:
     }
 
 
+@app.get("/dashboard")
+def dashboard_info() -> dict[str, Any]:
+    """Return live host/runtime telemetry used by the CHIEF command center UI."""
+    from chief.core.dashboard import collect_dashboard_snapshot
+
+    snapshot = collect_dashboard_snapshot(PROJECT_ROOT)
+    definitions = list(tool_registry.definitions())
+    snapshot["runtime"] = {
+        "api_status": "online",
+        "active_model": model_provider.model,
+        "model_provider": model_provider.name,
+        "sessions": session_store.count(),
+        "tools": [
+            {
+                "name": definition.name,
+                "description": definition.description,
+                "risk": definition.risk.value,
+                "requires_approval": definition.requires_approval,
+            }
+            for definition in definitions
+        ],
+        "permissions": {
+            "approval_gated": sum(1 for item in definitions if item.requires_approval),
+            "automatic": sum(1 for item in definitions if not item.requires_approval),
+        },
+        "agents": [
+            {"name": "CHIEF Core", "status": "operational", "kind": "orchestrator"},
+            {"name": "Memory", "status": "operational", "kind": "service"},
+            {"name": "Tool Planner", "status": "operational", "kind": "agent"},
+            {
+                "name": "Ollama",
+                "status": "operational" if snapshot["ollama"]["online"] else "offline",
+                "kind": "model service",
+            },
+        ],
+        "queued_tasks": [],
+        "recent_executions": [],
+        "projects": [
+            {
+                "name": "CHIEF",
+                "status": "active",
+                "path": str(PROJECT_ROOT),
+            }
+        ],
+        "objectives": [
+            {"name": "Command center parity", "status": "active"},
+            {"name": "Reliable local AI runtime", "status": "active"},
+            {"name": "Phone-accessible control", "status": "active"},
+        ],
+    }
+    return snapshot
+
+
 @app.get("/tools", response_model=list[ToolDefinitionResponse])
 def list_tools() -> list[ToolDefinitionResponse]:
     """List tools currently available through CHIEF's guarded registry."""
