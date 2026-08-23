@@ -22,8 +22,8 @@ verify the result, and identify anything it could not confirm.
 
 | Area | Current implementation |
 |---|---|
-| Core API | FastAPI application with liveness, dependency-aware readiness, system, dashboard, chat, work, events, foresight, runs, decisions, business graph, notifications, audit, tools, and plans endpoints. |
-| Local interface | Responsive React command center, installable PWA shell, mobile layout, offline-safe static cache, opt-in browser push-to-talk, and opt-in spoken replies. |
+| Core API | FastAPI application with liveness, dependency-aware readiness, system, dashboard, portfolio, chat, work, events, foresight, runs, decisions, business graph, notifications, audit, tools, and plans endpoints. |
+| Local interface | Responsive React command center with an explicit blank-portfolio onboarding state, installable PWA shell, mobile layout, offline-safe static cache, opt-in browser push-to-talk, and opt-in spoken replies. |
 | Models | CHIEF-owned provider contract, capability/privacy/cost requirements, ordered fallback, failure tracking, cooldown circuit breaker, and a configured local Ollama adapter. |
 | Memory | SQLite memory with types, scope, sensitivity, source provenance, confidence, temporal validity, expiry, correction/supersession, forgetting, and FTS5-assisted retrieval. |
 | Sessions | Owner-scoped, restart-safe SQLite conversations and atomically consumed, expiring tool-approval proposals. |
@@ -33,6 +33,7 @@ verify the result, and identify anything it could not confirm.
 | Work and foresight | Persistent goals, tasks, blockers, executive briefings, signals, assumptions, KPIs, and transparent attention scoring. |
 | Decisions | Persistent decision records with criteria, options, evidence, assumptions, risks, provenance, deterministic weighted scoring, and score explanations. |
 | Business context | Owner-scoped temporal graph of organizations, people, products, customers, competitors, projects, opportunities, risks, documents, and typed relationships with bounded traversal. |
+| Portfolio control | Empty-by-default registry for businesses, managed agents, systems, account references, authority ceilings, zero-default budgets, health heartbeats, and onboarding state. Registration never activates execution or financial writes. |
 | Events | Durable once, interval, and daily schedules; time-zone-aware occurrence calculation; deduplicated events, leases, retries, and dead-letter state. |
 | Attention | Persistent notifications with idempotency, deduplication, quiet hours, cooldowns, finite interruption budgets, digest/interrupt/suppress decisions, attempts, and receipts. |
 | Integrations | Deny-by-default connector contracts for declared scopes, explicit consent, sync cursors, health, rate limits, evidence digests, and idempotent writes. No production connectors are registered yet. |
@@ -55,9 +56,10 @@ React PWA / local API client
 Conversation  Operating   Execution
 and memory    domains     control plane
      |         |          |
-  Ollama    work, graph,  tools, plans,
-  router    decisions,    runs, events,
-            foresight     approvals
+  Ollama    portfolio,    tools, plans,
+  router    work, graph,  runs, events,
+            decisions,    approvals
+            foresight
      \         |          /
        SQLite state + append-only audit
 ```
@@ -95,6 +97,7 @@ chief/
 │   ├── foresight/         # Signals, assumptions, KPIs, and transparent ranking
 │   ├── decisions/         # Decision journal and deterministic option scoring
 │   ├── business/          # Owner-scoped temporal business knowledge graph
+│   ├── portfolio/         # Governed businesses, managed agents, systems, and accounts
 │   ├── notifications/     # Attention policy, delivery state, and receipts
 │   ├── integrations/      # Consent- and evidence-aware connector contracts
 │   ├── voice/             # STT/TTS contracts and privacy state machine
@@ -184,6 +187,9 @@ CHIEF has a strong local control plane, but it is not yet a finished autonomous 
   dispatcher is connected.
 - The business graph, decisions, and foresight domains have APIs but limited UI integration
   and no live evidence population.
+- The portfolio starts deliberately blank. Registered businesses and agents remain paused with
+  zero spend and no external-write authority until a future explicit governance workflow grants
+  narrower permission; registration alone cannot activate them.
 - SQLite is appropriate for the current single-owner/single-host milestone, not a distributed
   multi-worker or multi-tenant deployment.
 - State is not encrypted at rest, the audit chain is not externally anchored, schema migration
@@ -192,7 +198,9 @@ CHIEF has a strong local control plane, but it is not yet a finished autonomous 
   relay, and production mobile qualification remain future work.
 
 For the evidence-based competitive assessment and prioritized remaining work, see
-[docs/BEST_IN_CLASS_CHECKLIST.md](docs/BEST_IN_CLASS_CHECKLIST.md). For deterministic release
+[docs/BEST_IN_CLASS_CHECKLIST.md](docs/BEST_IN_CLASS_CHECKLIST.md). The blank portfolio hierarchy,
+onboarding order, and authority contract are in
+[docs/PORTFOLIO_OPERATING_MODEL.md](docs/PORTFOLIO_OPERATING_MODEL.md). For deterministic release
 gates, see [docs/EVALUATION.md](docs/EVALUATION.md).
 
 ## Development rule

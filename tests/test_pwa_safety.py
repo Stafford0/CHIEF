@@ -15,6 +15,7 @@ def test_service_worker_explicitly_excludes_private_api_families() -> None:
         "/memory",
         "/notifications",
         "/plans",
+        "/portfolio",
         "/runs",
         "/sessions",
         "/tools",

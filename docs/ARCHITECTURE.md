@@ -46,8 +46,8 @@ limit, not presented as an existing capability.
 │  request ID · security headers · execution kill switch                  │
 │                                │                                        │
 │  Conversation plane           │       Co-founder operating plane        │
-│  sessions · memory · chat ─────┼────── work · foresight · decisions      │
-│  deterministic commands       │       business graph · attention        │
+│  sessions · memory · chat ─────┼────── portfolio · work · foresight      │
+│  deterministic commands       │       decisions · graph · attention     │
 │                                │                                        │
 │  Intelligence plane           │       Execution control plane           │
 │  model contract · router ──────┼────── tools · guard · approvals         │
@@ -75,7 +75,7 @@ notification delivery channels, browser/computer-use worker, cloud model adapter
 - builds the guarded standard tool registry and persistent audit log;
 - builds the bounded plan executor, scheduler, and durable run engine;
 - registers two safe run handlers: `briefing.generate` and `foresight.snapshot`;
-- mounts the decision, business graph, and notification API router.
+- mounts the portfolio, decision, business graph, and notification API routers.
 
 The HTTP boundary applies these controls before protected application routes:
 
@@ -243,6 +243,22 @@ event-to-run dispatcher ships yet.
 
 These modules are durable structured state, not autonomous agents by themselves.
 
+### Portfolio registry
+
+`chief.portfolio` is the owner-scoped control inventory for businesses, managed agents,
+systems, and financial-account references. It starts with no records. Every registered business
+or agent receives an isolated memory namespace, an engaged kill switch, disabled execution,
+disabled external writes, and a zero-valued budget by default. Systems begin with both reads and
+writes disabled; financial records are references only and begin without balance or transaction
+access. Credential fields accept opaque environment, keyring, or vault references rather than
+secret material.
+
+The store validates business ownership, agent parentage, cross-business boundaries, personal
+scope isolation, and hierarchy cycles. Heartbeats are evidence-digest-bearing health reports;
+recording one never activates its agent. Summary and onboarding views make the empty state and
+next human-controlled setup step visible. The registry is governance state, not an execution
+grant: it does not create connector consent, tool approval, or spending authority.
+
 ### Work
 
 `chief.work` persists goals and tasks with status, priority, target/due dates, blockers, and
@@ -333,6 +349,7 @@ Most current durable components create their own tables in the shared `data/chie
 | Runs | runs, steps, attempts, checkpoints, and run events |
 | Decisions | complete decision record documents |
 | Business | graph nodes and relationships |
+| Portfolio | businesses, managed agents, systems, financial-account references, and heartbeats |
 | Notifications | notifications, attention decisions, attempts, and receipts |
 | Audit | immutable tool/approval events and hash links |
 
@@ -355,8 +372,9 @@ and proposal IDs when supplied.
 
 The hash chain detects accidental corruption and unsophisticated edits. A database owner can
 recompute the chain, so this is not an externally anchored or cryptographically signed ledger.
-Audit coverage is also not yet universal: ordinary work, graph, decision, foresight, and
-notification mutations do not all emit audit records.
+The HTTP adapters emit privacy-minimized state-change records for portfolio, work, graph,
+decision, foresight, notification, memory, schedule, and run mutations. Direct store use and
+future connector internals still require their own audited boundary.
 
 HTTP requests receive correlation IDs and structured completion logs with method, path, status,
 and duration. Full model traces, connector traces, metrics export, alerting, retention controls,

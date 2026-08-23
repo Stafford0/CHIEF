@@ -25,6 +25,17 @@ def test_system_info() -> None:
     assert response.json()["milestone"] == "CHIEF ZERO"
 
 
+def test_dashboard_embeds_the_owner_scoped_portfolio_contract() -> None:
+    dashboard = client.get("/dashboard")
+    portfolio = client.get("/portfolio")
+
+    assert dashboard.status_code == 200
+    assert portfolio.status_code == 200
+    runtime = dashboard.json()["runtime"]
+    assert runtime["portfolio_summary"] == portfolio.json()["summary"]
+    assert runtime["portfolio_onboarding"] == portfolio.json()["onboarding"]
+
+
 def test_tools_endpoint_exposes_guarded_registry() -> None:
     response = client.get("/tools")
 

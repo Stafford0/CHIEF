@@ -23,6 +23,7 @@ const PRIVATE_PATH_PREFIXES = [
   "/memory",
   "/notifications",
   "/plans",
+  "/portfolio",
   "/ready",
   "/runs",
   "/schedules",

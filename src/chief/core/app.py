@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from starlette.requests import Request
 
 from chief.agents import ExecutionPlan, PlanExecutor, PlanOutcome
-from chief.api import create_operating_router
+from chief.api import create_operating_router, create_portfolio_router
 from chief.audit.log import AuditEvent
 from chief.audit.sqlite import SQLiteAuditLog
 from chief.business import SQLiteBusinessGraphStore
@@ -46,6 +46,7 @@ from chief.memory.sqlite import SQLiteMemoryStore
 from chief.models.ollama import OllamaProvider
 from chief.models.router import ModelRouter
 from chief.notifications import AttentionPolicy, NotificationStore
+from chief.portfolio import SQLitePortfolioStore
 from chief.runs import (
     ActionResult,
     EngineOutcome,
@@ -254,6 +255,7 @@ foresight_store = ForesightStore()
 run_store = SQLiteRunStore()
 decision_store = SQLiteDecisionStore()
 business_store = SQLiteBusinessGraphStore()
+portfolio_store = SQLitePortfolioStore()
 notification_store = NotificationStore()
 attention_policy = AttentionPolicy()
 
@@ -330,6 +332,12 @@ app.include_router(
         business_store=business_store,
         notification_store=notification_store,
         attention_policy=attention_policy,
+        record_change=_record_domain_change,
+    )
+)
+app.include_router(
+    create_portfolio_router(
+        portfolio_store=portfolio_store,
         record_change=_record_domain_change,
     )
 )
@@ -525,6 +533,7 @@ def readiness() -> dict[str, Any] | JSONResponse:
             "business_store",
             lambda: business_store.list_nodes(owner_id="__readiness__", limit=1) is not None,
         ),
+        "portfolio_store": _run_readiness_check("portfolio_store", portfolio_store.health),
         "notification_store": _run_readiness_check(
             "notification_store",
             lambda: notification_store.get_by_idempotency_key("__readiness__") is None,
@@ -859,6 +868,8 @@ def dashboard_info(request: Request) -> dict[str, Any]:
     recent_runs = run_store.list_runs(limit=10)
     decisions = decision_store.list(limit=20)
     business_nodes = business_store.list_nodes(owner_id=request.state.actor_id, limit=100)
+    portfolio_summary = portfolio_store.summary(owner_id=request.state.actor_id)
+    portfolio_onboarding = portfolio_store.onboarding_state(owner_id=request.state.actor_id)
     notifications = notification_store.active(
         recipient_id=request.state.actor_id,
         now=datetime.now(UTC),
@@ -948,6 +959,8 @@ def dashboard_info(request: Request) -> dict[str, Any]:
             for decision in decisions
         ],
         "business_graph": {"active_nodes": len(business_nodes)},
+        "portfolio_summary": portfolio_summary.model_dump(mode="json"),
+        "portfolio_onboarding": portfolio_onboarding.model_dump(mode="json"),
         "attention": {
             "active_notifications": len(notifications),
             "daily_interruption_budget": attention_policy.config.daily_interruption_budget,

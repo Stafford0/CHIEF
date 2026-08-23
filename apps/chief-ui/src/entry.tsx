@@ -3,6 +3,7 @@ import "./concept2-repro.css";
 import "./concept2-refine.css";
 import "./concept2-final.css";
 import "./voice.css";
+import "./portfolio.css";
 import "./main.tsx";
 
 if ("serviceWorker" in navigator && import.meta.env.PROD) {

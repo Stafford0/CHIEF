@@ -5,7 +5,8 @@ import {
   HardDrive, Laptop, LockKeyhole, MemoryStick, MessageSquare, Network, Radio,
   RefreshCw, Send, Server, Settings, ShieldCheck, Smartphone, TerminalSquare,
   Wrench, Zap, Crosshair, Layers3, ScanLine, FolderGit2, Gauge, Router,
-  Download, Mic, MicOff, Square, Volume2, VolumeX,
+  Download, Mic, MicOff, Square, Volume2, VolumeX, BriefcaseBusiness,
+  Building2, Cable, CircleDot, Landmark, UserRoundCog,
 } from "lucide-react";
 import "./styles.css";
 import { ChiefApiError, hasChiefApiToken, requestJson, setChiefApiToken } from "./api";
@@ -15,6 +16,32 @@ type Health = { status: string; system: string; version: string };
 type SystemInfo = { name: string; full_name: string; version: string; milestone: string; environment: string };
 type ChatMessage = { role: "user" | "assistant"; content: string };
 type ChatResponse = { response: string; provider: string; model: string; session_id: string };
+type PortfolioSummary = {
+  owner_id: string;
+  businesses: number;
+  agents: number;
+  systems: number;
+  financial_accounts: number;
+  active_agents: number;
+  execution_enabled_agents: number;
+  external_write_enabled_systems: number;
+  healthy_agents: number;
+  is_blank: boolean;
+};
+type PortfolioOnboardingStep = {
+  key: string;
+  title: string;
+  complete: boolean;
+  requires_human: boolean;
+  description?: string;
+};
+type PortfolioOnboarding = {
+  owner_id: string;
+  is_blank: boolean;
+  ready_for_autonomy: boolean;
+  next_step: string | null;
+  steps: PortfolioOnboardingStep[];
+};
 type Dashboard = {
   captured_at: string;
   host: { hostname: string; os: string; os_release: string; architecture: string; python: string; cpu_count: number | null };
@@ -36,10 +63,12 @@ type Dashboard = {
     recent_executions: Array<{ name?: string; status?: string; tool_name?: string; success?: boolean }>;
     projects: Array<{ name: string; status: string; path: string }>;
     objectives: Array<{ name: string; status: string }>;
+    portfolio_summary?: PortfolioSummary;
+    portfolio_onboarding?: PortfolioOnboarding;
   };
 };
 
-type View = "overview" | "chat";
+type View = "overview" | "portfolio" | "chat";
 const DEFAULT_API_PROTOCOL = window.location.protocol === "https:" ? "https:" : "http:";
 const API_BASE = import.meta.env.VITE_CHIEF_API_URL || `${DEFAULT_API_PROTOCOL}//${window.location.hostname}:8000`;
 const API_URL = new URL(API_BASE, window.location.href);
@@ -53,7 +82,8 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const navItems = [
-  [Activity, "Status", "overview"], [MessageSquare, "Chat", "chat"], [BrainCircuit, "Memory", "overview"],
+  [Activity, "Status", "overview"], [BriefcaseBusiness, "Portfolio", "portfolio"],
+  [MessageSquare, "Chat", "chat"], [BrainCircuit, "Memory", "overview"],
   [Wrench, "Tools", "overview"], [FolderGit2, "Projects", "overview"], [Radio, "Sessions", "overview"],
   [ShieldCheck, "Permissions", "overview"], [Settings, "System", "overview"],
 ] as const;
@@ -64,9 +94,10 @@ function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
-  const [view, setView] = useState<View>(() =>
-    new URLSearchParams(window.location.search).get("view") === "chat" ? "chat" : "overview",
-  );
+  const [view, setView] = useState<View>(() => {
+    const requested = new URLSearchParams(window.location.search).get("view");
+    return requested === "chat" || requested === "portfolio" ? requested : "overview";
+  });
   const [clock, setClock] = useState(new Date());
   const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: "CHIEF command interface online. Awaiting directive." }]);
   const [input, setInput] = useState("");
@@ -234,7 +265,7 @@ function App() {
     <section className="c2-workspace">
       <aside className="c2-left">
         <Panel title="COMMAND" className="c2-nav"><nav>{navItems.map(([Icon,label,target]) => {
-          const active = (view === "chat" && label === "Chat") || (view === "overview" && label === "Status");
+          const active = view === target && (target !== "overview" || label === "Status");
           return <button key={label} className={`nav-item ${active ? "active" : ""}`} onClick={() => setView(target)}><Icon size={18}/><span>{label}</span>{active && <ChevronRight size={14} className="push"/>}</button>;
         })}</nav></Panel>
         <Panel title="CHIEF OBJECTIVES" className="c2-objectives">
@@ -267,7 +298,13 @@ function App() {
             </div>
             <Panel title="QUICK ACTIONS" className="c2-quick"><Action icon={<Crosshair/>} label="System Grid"/><Action icon={<RefreshCw/>} label="Refresh Data" onClick={loadTelemetry}/><Action icon={<MessageSquare/>} label="Open Chat" onClick={()=>setView("chat")}/><Action icon={<Wrench/>} label={`${toolCount} Tools`}/><Action icon={<ShieldCheck/>} label="Permissions"/><Action icon={<Download/>} label={pwaStatus} onClick={installPrompt ? installApp : undefined}/></Panel>
           </section>
-        </> : <ChatPanel messages={messages} input={input} setInput={setInput} sendMessage={sendMessage} busy={busy} voice={voice} appInstalled={appInstalled} installReady={Boolean(installPrompt)} installApp={installApp}/>}
+        </> : view === "portfolio" ? <PortfolioPanel
+          summary={dashboard?.runtime.portfolio_summary}
+          onboarding={dashboard?.runtime.portfolio_onboarding}
+          online={online}
+          onRefresh={()=>void loadTelemetry()}
+          onBegin={()=>{setInput("Help me define my first business portfolio.");setView("chat");}}
+        /> : <ChatPanel messages={messages} input={input} setInput={setInput} sendMessage={sendMessage} busy={busy} voice={voice} appInstalled={appInstalled} installReady={Boolean(installPrompt)} installApp={installApp}/>}
       </section>
 
       <aside className="c2-right">
@@ -281,7 +318,7 @@ function App() {
           <Panel title="ACTIVE SERVICES" className="c2-services"><ServiceRow label="CHIEF CORE" value={online ? "ONLINE" : "OFFLINE"} good={online}/><ServiceRow label="FASTAPI" value={dashboard?.runtime.api_status || "--"} good={online}/><ServiceRow label="OLLAMA" value={dashboard?.ollama.online ? "ONLINE" : "OFFLINE"} good={!!dashboard?.ollama.online}/><ServiceRow label="TOOL REGISTRY" value={`${toolCount} TOOLS`} good/><ServiceRow label="MEMORY" value="LOCAL" good/></Panel>
           <Panel title="NETWORK STATUS" className="c2-network"><div className="network-visual"><Router size={54}/><span>{clientIsPhone ? "MOBILE CLIENT" : "DESKTOP CLIENT"}</span><strong>{dashboard?.network.addresses[0] || "NO ADDRESS"}</strong></div><InfoRow label="HOST" value={dashboard?.network.hostname || "--"}/><InfoRow label="LINK" value={adapter?.link_speed || "--"}/><InfoRow label="ADAPTER" value={adapter?.name || "--"}/></Panel>
           <Panel title="ALERTS FEED" className="c2-alerts">{alerts.length ? alerts.slice(0,5).map((a,i)=><Alert key={i} text={a.text} mild={a.mild}/>) : <div className="clear"><ShieldCheck size={15}/> No active system alerts</div>}</Panel>
-          <Panel title="SHORTCUTS" className="c2-shortcuts"><div className="shortcut-grid"><Action icon={<MessageSquare/>} label="Chat" onClick={()=>setView("chat")}/><Action icon={<FolderGit2/>} label="Projects"/><Action icon={<Wrench/>} label="Tools"/><Action icon={<ShieldCheck/>} label="Audit"/><Action icon={<RefreshCw/>} label="Refresh" onClick={loadTelemetry}/><Action icon={<Download/>} label={pwaStatus} onClick={installPrompt ? installApp : undefined}/></div></Panel>
+          <Panel title="SHORTCUTS" className="c2-shortcuts"><div className="shortcut-grid"><Action icon={<BriefcaseBusiness/>} label="Portfolio" onClick={()=>setView("portfolio")}/><Action icon={<MessageSquare/>} label="Chat" onClick={()=>setView("chat")}/><Action icon={<Wrench/>} label="Tools"/><Action icon={<ShieldCheck/>} label="Audit"/><Action icon={<RefreshCw/>} label="Refresh" onClick={loadTelemetry}/><Action icon={<Download/>} label={pwaStatus} onClick={installPrompt ? installApp : undefined}/></div></Panel>
         </div>
       </aside>
     </section>
@@ -324,6 +361,105 @@ function NetworkMap({dashboard,online,clientIsPhone}:{dashboard:Dashboard|null;o
     <div className="map-readout readout-c"><span>PERMISSIONS</span><strong>{dashboard?.runtime.permissions.approval_gated || 0} GUARDED</strong><small>{dashboard?.runtime.permissions.automatic || 0} AUTOMATIC</small></div>
     <div className="map-layers"><span>GRID <i/></span><span>SERVICES <i/></span><span>MODELS <i/></span><span>TOOLS <i/></span><span>PROJECTS <i/></span></div>
   </div>;
+}
+
+const PORTFOLIO_GUIDANCE: PortfolioOnboardingStep[] = [
+  {
+    key: "business",
+    title: "Define your first business",
+    complete: false,
+    requires_human: true,
+    description: "Capture its name, mission, stage, priorities, and the outcomes that matter now.",
+  },
+  {
+    key: "systems",
+    title: "Connect operating systems",
+    complete: false,
+    requires_human: true,
+    description: "Start with read-only sources so CHIEF can build an evidence-backed picture.",
+  },
+  {
+    key: "accounts",
+    title: "Link financial accounts",
+    complete: false,
+    requires_human: true,
+    description: "Authorize only the accounts and visibility needed for reliable business health.",
+  },
+  {
+    key: "agents",
+    title: "Assign agents and authority",
+    complete: false,
+    requires_human: true,
+    description: "Define responsibilities, approval gates, budgets, and actions that remain human-only.",
+  },
+];
+
+function PortfolioPanel({summary,onboarding,online,onRefresh,onBegin}:{summary?:PortfolioSummary;onboarding?:PortfolioOnboarding;online:boolean;onRefresh:()=>void;onBegin:()=>void}) {
+  const counts = {
+    businesses: boundedCount(summary?.businesses),
+    agents: boundedCount(summary?.agents),
+    systems: boundedCount(summary?.systems),
+    accounts: boundedCount(summary?.financial_accounts),
+  };
+  const isBlank = summary?.is_blank ?? onboarding?.is_blank ?? Object.values(counts).every((count) => count === 0);
+  const guidance = onboarding?.steps?.length ? onboarding.steps : PORTFOLIO_GUIDANCE;
+  const completedCount = guidance.filter((step) => step.complete).length;
+  const nextStep = onboarding?.next_step || guidance.find((step) => !step.complete)?.title || "Define your first business";
+  const progress = guidance.length ? Math.min(100, Math.round((completedCount / guidance.length) * 100)) : 0;
+  return <section className="portfolio-view hud-frame" aria-labelledby="portfolio-title">
+    <header className="portfolio-header">
+      <div><span className="eyebrow">FOUNDER OPERATING PORTFOLIO</span><h2 id="portfolio-title">PORTFOLIO</h2><p>A truthful view of the businesses, agents, systems, and financial accounts CHIEF is authorized to understand.</p></div>
+      <div className={`portfolio-state ${isBlank ? "blank" : "active"}`}><i/><span>{isBlank ? "BLANK / INERT" : "PORTFOLIO REGISTERED"}</span></div>
+    </header>
+
+    <div className="portfolio-counts" aria-label="Portfolio summary">
+      <PortfolioCount icon={<Building2/>} label="Businesses" value={counts.businesses} detail="Operating entities"/>
+      <PortfolioCount icon={<UserRoundCog/>} label="Agents" value={counts.agents} detail={`${boundedCount(summary?.active_agents)} active · ${boundedCount(summary?.healthy_agents)} healthy`}/>
+      <PortfolioCount icon={<Cable/>} label="Systems" value={counts.systems} detail={`${boundedCount(summary?.external_write_enabled_systems)} external-write enabled`}/>
+      <PortfolioCount icon={<Landmark/>} label="Accounts" value={counts.accounts} detail="references only / no transaction authority"/>
+    </div>
+
+    <div className="portfolio-body">
+      <section className="portfolio-blank-card">
+        <div className="portfolio-orbit" aria-hidden="true"><span/><span/><BriefcaseBusiness/></div>
+        <span className="eyebrow">{isBlank ? "NO PORTFOLIO DATA YET" : "PORTFOLIO FOUNDATION"}</span>
+        <h3>{isBlank ? "Build the operating picture CHIEF should protect and grow." : "Your operating portfolio is taking shape."}</h3>
+        <p>{isBlank ? "Nothing has been invented or preloaded. Add the first business deliberately, then connect only the people, systems, and accounts you choose." : "Continue onboarding to give CHIEF the context and authority boundaries needed for reliable execution."}</p>
+        <div className="portfolio-next"><CircleDot/><div><span>NEXT RECOMMENDED STEP</span><strong>{humanizeStep(nextStep)}</strong></div></div>
+        <div className="portfolio-actions">
+          <button type="button" className="portfolio-primary" onClick={onBegin}><MessageSquare/> BEGIN WITH CHIEF</button>
+          <button type="button" className="portfolio-secondary" onClick={onRefresh}><RefreshCw/> REFRESH SECURE DATA</button>
+        </div>
+        <small className="portfolio-integrity">{online ? summary ? "LIVE SUMMARY · NO SEEDED DATA" : "CORE CONNECTED · PORTFOLIO SUMMARY PENDING" : "CORE OFFLINE · COUNTS MAY BE STALE"}</small>
+      </section>
+
+      <section className="portfolio-onboarding" aria-labelledby="onboarding-title">
+        <div className="portfolio-section-head"><div><span className="eyebrow">CONTROLLED ONBOARDING</span><h3 id="onboarding-title">FOUNDER SETUP PATH</h3></div><strong>{completedCount}/{guidance.length}</strong></div>
+        <div className="portfolio-progress"><span style={{width:`${progress}%`}}/></div>
+        <ol>{guidance.map((step,index)=>{
+          const complete = step.complete;
+          const current = !complete && index === Math.min(completedCount, guidance.length - 1);
+          return <li key={step.key || `${step.title}-${index}`} className={complete ? "complete" : current ? "current" : "pending"}>
+            <b>{String(index + 1).padStart(2,"0")}</b><div><strong>{humanizeStep(step.title || `Setup step ${index + 1}`)}</strong>{step.description && <p>{step.description}</p>}</div><span>{complete ? "COMPLETE" : current ? step.requires_human ? "HUMAN NEXT" : "NEXT" : "PENDING"}</span>
+          </li>;
+        })}</ol>
+        <div className="portfolio-guardrail"><ShieldCheck/><p><strong>{onboarding?.ready_for_autonomy ? "Autonomy prerequisites reported ready." : "Least privilege from day one."}</strong> Connections begin disabled. External writes remain separately authorized and approval-gated.</p></div>
+      </section>
+    </div>
+  </section>;
+}
+
+function PortfolioCount({icon,label,value,detail}:{icon:React.ReactNode;label:string;value:number;detail:string}) {
+  return <article className="portfolio-count"><div className="portfolio-count-icon">{icon}</div><div><span>{label}</span><strong>{value}</strong><small>{detail}</small></div></article>;
+}
+
+function boundedCount(value: number | undefined): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+}
+
+function humanizeStep(value: string): string {
+  const words = value.replace(/[_-]+/g," ").replace(/\s+/g," ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : "Define your first business";
 }
 
 function ChatPanel({messages,input,setInput,sendMessage,busy,voice,appInstalled,installReady,installApp}:{messages:ChatMessage[];input:string;setInput:(v:string)=>void;sendMessage:(e:FormEvent)=>void;busy:boolean;voice:BrowserVoiceControls;appInstalled:boolean;installReady:boolean;installApp:()=>Promise<void>}) {
