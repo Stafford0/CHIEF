@@ -5,9 +5,11 @@ import {
   HardDrive, Laptop, LockKeyhole, MemoryStick, MessageSquare, Network, Radio,
   RefreshCw, Send, Server, Settings, ShieldCheck, Smartphone, TerminalSquare,
   Wrench, Zap, Crosshair, Layers3, ScanLine, FolderGit2, Gauge, Router,
+  Download, Mic, MicOff, Square, Volume2, VolumeX,
 } from "lucide-react";
 import "./styles.css";
-import { requestJson } from "./api";
+import { ChiefApiError, hasChiefApiToken, requestJson, setChiefApiToken } from "./api";
+import { useBrowserVoice, type BrowserVoiceControls } from "./useBrowserVoice";
 
 type Health = { status: string; system: string; version: string };
 type SystemInfo = { name: string; full_name: string; version: string; milestone: string; environment: string };
@@ -38,7 +40,18 @@ type Dashboard = {
 };
 
 type View = "overview" | "chat";
-const API_BASE = import.meta.env.VITE_CHIEF_API_URL || `http://${window.location.hostname}:8000`;
+const DEFAULT_API_PROTOCOL = window.location.protocol === "https:" ? "https:" : "http:";
+const API_BASE = import.meta.env.VITE_CHIEF_API_URL || `${DEFAULT_API_PROTOCOL}//${window.location.hostname}:8000`;
+const API_URL = new URL(API_BASE, window.location.href);
+const API_IS_LOOPBACK = ["localhost", "127.0.0.1", "::1"].includes(API_URL.hostname);
+const API_IS_PROTECTED = API_URL.protocol === "https:";
+const PAIRING_TRANSPORT_SAFE = API_IS_LOOPBACK || API_IS_PROTECTED;
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+}
+
 const navItems = [
   [Activity, "Status", "overview"], [MessageSquare, "Chat", "chat"], [BrainCircuit, "Memory", "overview"],
   [Wrench, "Tools", "overview"], [FolderGit2, "Projects", "overview"], [Radio, "Sessions", "overview"],
@@ -51,14 +64,25 @@ function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
-  const [view, setView] = useState<View>("overview");
+  const [view, setView] = useState<View>(() =>
+    new URLSearchParams(window.location.search).get("view") === "chat" ? "chat" : "overview",
+  );
   const [clock, setClock] = useState(new Date());
   const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: "CHIEF command interface online. Awaiting directive." }]);
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(() => sessionStorage.getItem("chief.session"));
   const [busy, setBusy] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [pairingRequired, setPairingRequired] = useState(
+    () => !API_IS_LOOPBACK && !hasChiefApiToken(),
+  );
+  const [pairingToken, setPairingToken] = useState("");
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [appInstalled, setAppInstalled] = useState(
+    () => window.matchMedia("(display-mode: standalone)").matches,
+  );
   const chatAbort = useRef<AbortController | null>(null);
+  const voice = useBrowserVoice(setInput);
 
   async function loadTelemetry() {
     try {
@@ -66,7 +90,10 @@ function App() {
         requestJson<Health>(`${API_BASE}/health`, {}, 5000), requestJson<SystemInfo>(`${API_BASE}/system`, {}, 5000), requestJson<Dashboard>(`${API_BASE}/dashboard`, {}, 8000),
       ]);
       setHealth(nextHealth); setSystem(nextSystem); setDashboard(nextDashboard); setApiError(null);
-    } catch (error) { setApiError(error instanceof Error ? error.message : "Connection failed"); }
+    } catch (error) {
+      if (error instanceof ChiefApiError && error.status === 401) setPairingRequired(true);
+      setApiError(error instanceof Error ? error.message : "Connection failed");
+    }
   }
 
   useEffect(() => {
@@ -80,6 +107,55 @@ function App() {
     window.addEventListener("offline", offline);
     return () => { clearInterval(telemetryTimer); clearInterval(clockTimer); document.removeEventListener("visibilitychange", refresh); window.removeEventListener("online", refresh); window.removeEventListener("offline", offline); chatAbort.current?.abort(); };
   }, []);
+
+  useEffect(() => {
+    const captureInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    const markInstalled = () => {
+      setAppInstalled(true);
+      setInstallPrompt(null);
+    };
+    window.addEventListener("beforeinstallprompt", captureInstallPrompt);
+    window.addEventListener("appinstalled", markInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", captureInstallPrompt);
+      window.removeEventListener("appinstalled", markInstalled);
+    };
+  }, []);
+
+  async function installApp() {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    if (choice.outcome === "accepted") setAppInstalled(true);
+    setInstallPrompt(null);
+  }
+
+  function pairApi(event: FormEvent) {
+    event.preventDefault();
+    if (!PAIRING_TRANSPORT_SAFE) {
+      setApiError("Pairing is blocked until CHIEF Core is reached through HTTPS or localhost");
+      return;
+    }
+    const token = pairingToken.trim();
+    if (token.length < 32) {
+      setApiError("Pairing token must contain at least 32 characters");
+      return;
+    }
+    setChiefApiToken(token);
+    setPairingToken("");
+    setPairingRequired(false);
+    setApiError(null);
+    void loadTelemetry();
+  }
+
+  function forgetApiToken() {
+    setChiefApiToken("");
+    setPairingRequired(!API_IS_LOOPBACK);
+    setApiError("This tab is no longer paired with CHIEF Core");
+  }
 
   const online = health?.status === "online" && dashboard?.runtime.api_status === "online";
   const activeModel = dashboard?.runtime.active_model || "LOCAL MODEL";
@@ -97,6 +173,14 @@ function App() {
   const recent = dashboard?.runtime.recent_executions || [];
   const tasks = dashboard?.runtime.queued_tasks || [];
   const adapter = dashboard?.network.adapters[0];
+  const apiLinkLabel = online
+    ? API_IS_PROTECTED
+      ? "PROTECTED / LIVE"
+      : API_IS_LOOPBACK
+        ? "LOCAL / LIVE"
+        : "UNPROTECTED / LIVE"
+    : "NO LINK";
+  const pwaStatus = appInstalled ? "INSTALLED" : installPrompt ? "INSTALL READY" : "BROWSER INSTALL";
   const alerts = useMemo(() => {
     const rows: Array<{ text: string; mild?: boolean }> = [];
     if (apiError) rows.push({ text: apiError });
@@ -105,8 +189,9 @@ function App() {
     if (dashboard?.memory.percent != null && dashboard.memory.percent > 88) rows.push({ text: `Memory pressure: ${fmtPct(dashboard.memory.percent)}` });
     if (dashboard?.disk.percent != null && dashboard.disk.percent > 90) rows.push({ text: `Disk utilization: ${fmtPct(dashboard.disk.percent)}` });
     if (dashboard?.gpu.available === false) rows.push({ text: "GPU telemetry unavailable", mild: true });
+    if (online && !API_IS_PROTECTED && !API_IS_LOOPBACK) rows.push({ text: "API link uses unprotected HTTP", mild: true });
     return rows;
-  }, [apiError, dashboard]);
+  }, [apiError, dashboard, online]);
 
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
@@ -117,6 +202,7 @@ function App() {
       chatAbort.current = new AbortController();
       const data = await requestJson<ChatResponse>(`${API_BASE}/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, session_id: sessionId }), signal: chatAbort.current.signal }, 130000);
       setSessionId(data.session_id); sessionStorage.setItem("chief.session", data.session_id); setMessages((m) => [...m, { role: "assistant", content: data.response }]); setApiError(null); void loadTelemetry();
+      voice.speak(data.response);
     } catch (error) {
       setApiError(error instanceof Error ? error.message : "Chat failed");
       setMessages((m) => [...m, { role: "assistant", content: "Unable to reach CHIEF core. Check the API connection." }]);
@@ -135,6 +221,16 @@ function App() {
       </div>
     </header>
 
+    {(pairingRequired || hasChiefApiToken()) && <section className="pairing-strip hud-frame" aria-label="CHIEF Core device pairing">
+      {pairingRequired ? <form onSubmit={pairApi}>
+        <LockKeyhole size={18}/>
+        <label htmlFor="chief-pairing-token">PAIR THIS TAB WITH CHIEF CORE</label>
+        <input id="chief-pairing-token" type="password" value={pairingToken} onChange={(event)=>setPairingToken(event.target.value)} minLength={32} autoComplete="off" placeholder="Paste the 32+ character pairing token" disabled={!PAIRING_TRANSPORT_SAFE}/>
+        <button type="submit" disabled={!PAIRING_TRANSPORT_SAFE}>PAIR</button>
+        <small>{PAIRING_TRANSPORT_SAFE ? "Kept only for this browser tab session; never included in the app build or offline cache." : "Pairing is blocked on plain remote HTTP. Connect through HTTPS or an encrypted private tunnel first."}</small>
+      </form> : <div className="paired-state"><ShieldCheck size={17}/><span>THIS TAB IS PAIRED</span><button type="button" onClick={forgetApiToken}>FORGET TOKEN</button></div>}
+    </section>}
+
     <section className="c2-workspace">
       <aside className="c2-left">
         <Panel title="COMMAND" className="c2-nav"><nav>{navItems.map(([Icon,label,target]) => {
@@ -152,7 +248,7 @@ function App() {
         <Panel title="COMMS CHANNEL" className="c2-comms">
           <div className={`waveform ${online ? "live" : ""}`}>{Array.from({length:48},(_,i)=><i key={i} style={{height:`${18+((i*29)%68)}%`}}/>)}</div>
           <div className="comms-icons"><span><Crosshair/></span><span><Radio/></span><span><MessageSquare/></span><span><Network/></span></div>
-          <InfoRow label="API LINK" value={online ? "SECURE / LIVE" : "NO LINK"}/><InfoRow label="HOST" value={dashboard?.network.hostname || "--"}/><InfoRow label="ADAPTER" value={adapter?.name || "--"}/>
+          <InfoRow label="API LINK" value={apiLinkLabel}/><InfoRow label="HOST" value={dashboard?.network.hostname || "--"}/><InfoRow label="ADAPTER" value={adapter?.name || "--"}/>
         </Panel>
       </aside>
 
@@ -169,9 +265,9 @@ function App() {
               <Panel title="SYSTEM TIMELINE"><Timeline online={online} ollama={!!dashboard?.ollama.online} sessions={dashboard?.runtime.sessions || 0} executions={recent.length}/></Panel>
               <Panel title="COMMAND LOG" className="c2-command-log"><Log time="API" text={online ? "FastAPI core responding" : "Core unavailable"} warn={!online}/><Log time="AI" text={`${dashboard?.runtime.model_provider || "ollama"} / ${activeModel}`}/>{recent.slice(0,3).map((r,i)=><Log key={i} time={`E${i+1}`} text={r.name || r.tool_name || "Execution recorded"}/>)}</Panel>
             </div>
-            <Panel title="QUICK ACTIONS" className="c2-quick"><Action icon={<Crosshair/>} label="System Grid"/><Action icon={<RefreshCw/>} label="Refresh Data" onClick={loadTelemetry}/><Action icon={<MessageSquare/>} label="Open Chat" onClick={()=>setView("chat")}/><Action icon={<Wrench/>} label={`${toolCount} Tools`}/><Action icon={<ShieldCheck/>} label="Permissions"/><Action icon={<FolderGit2/>} label={`${dashboard?.runtime.projects.length || 0} Projects`}/></Panel>
+            <Panel title="QUICK ACTIONS" className="c2-quick"><Action icon={<Crosshair/>} label="System Grid"/><Action icon={<RefreshCw/>} label="Refresh Data" onClick={loadTelemetry}/><Action icon={<MessageSquare/>} label="Open Chat" onClick={()=>setView("chat")}/><Action icon={<Wrench/>} label={`${toolCount} Tools`}/><Action icon={<ShieldCheck/>} label="Permissions"/><Action icon={<Download/>} label={pwaStatus} onClick={installPrompt ? installApp : undefined}/></Panel>
           </section>
-        </> : <ChatPanel messages={messages} input={input} setInput={setInput} sendMessage={sendMessage} busy={busy}/>} 
+        </> : <ChatPanel messages={messages} input={input} setInput={setInput} sendMessage={sendMessage} busy={busy} voice={voice} appInstalled={appInstalled} installReady={Boolean(installPrompt)} installApp={installApp}/>}
       </section>
 
       <aside className="c2-right">
@@ -185,12 +281,12 @@ function App() {
           <Panel title="ACTIVE SERVICES" className="c2-services"><ServiceRow label="CHIEF CORE" value={online ? "ONLINE" : "OFFLINE"} good={online}/><ServiceRow label="FASTAPI" value={dashboard?.runtime.api_status || "--"} good={online}/><ServiceRow label="OLLAMA" value={dashboard?.ollama.online ? "ONLINE" : "OFFLINE"} good={!!dashboard?.ollama.online}/><ServiceRow label="TOOL REGISTRY" value={`${toolCount} TOOLS`} good/><ServiceRow label="MEMORY" value="LOCAL" good/></Panel>
           <Panel title="NETWORK STATUS" className="c2-network"><div className="network-visual"><Router size={54}/><span>{clientIsPhone ? "MOBILE CLIENT" : "DESKTOP CLIENT"}</span><strong>{dashboard?.network.addresses[0] || "NO ADDRESS"}</strong></div><InfoRow label="HOST" value={dashboard?.network.hostname || "--"}/><InfoRow label="LINK" value={adapter?.link_speed || "--"}/><InfoRow label="ADAPTER" value={adapter?.name || "--"}/></Panel>
           <Panel title="ALERTS FEED" className="c2-alerts">{alerts.length ? alerts.slice(0,5).map((a,i)=><Alert key={i} text={a.text} mild={a.mild}/>) : <div className="clear"><ShieldCheck size={15}/> No active system alerts</div>}</Panel>
-          <Panel title="SHORTCUTS" className="c2-shortcuts"><div className="shortcut-grid"><Action icon={<MessageSquare/>} label="Chat" onClick={()=>setView("chat")}/><Action icon={<FolderGit2/>} label="Projects"/><Action icon={<Wrench/>} label="Tools"/><Action icon={<ShieldCheck/>} label="Audit"/><Action icon={<RefreshCw/>} label="Refresh" onClick={loadTelemetry}/><Action icon={<Settings/>} label="Settings"/></div></Panel>
+          <Panel title="SHORTCUTS" className="c2-shortcuts"><div className="shortcut-grid"><Action icon={<MessageSquare/>} label="Chat" onClick={()=>setView("chat")}/><Action icon={<FolderGit2/>} label="Projects"/><Action icon={<Wrench/>} label="Tools"/><Action icon={<ShieldCheck/>} label="Audit"/><Action icon={<RefreshCw/>} label="Refresh" onClick={loadTelemetry}/><Action icon={<Download/>} label={pwaStatus} onClick={installPrompt ? installApp : undefined}/></div></Panel>
         </div>
       </aside>
     </section>
 
-    <footer className="c2-footer"><span><i className={online ? "online-dot" : "offline-dot"}/> LINK: {online ? "SECURE" : "DISCONNECTED"}</span><span>NODE: {dashboard?.host.hostname || "CHIEF-LOCAL"}</span><span>MODEL: {activeModel}</span><span>DATA INTEGRITY: {dashboard ? "VERIFIED" : "PENDING"}</span><span>CONTROL: LOCAL</span><span>ACCESS: DIRECTOR</span></footer>
+    <footer className="c2-footer"><span className={online && !API_IS_PROTECTED && !API_IS_LOOPBACK ? "link-warning" : ""}><i className={online ? "online-dot" : "offline-dot"}/> LINK: {apiLinkLabel}</span><span>NODE: {dashboard?.host.hostname || "CHIEF-LOCAL"}</span><span>MODEL: {activeModel}</span><span>DATA INTEGRITY: {dashboard ? "REPORTED" : "PENDING"}</span><span>CONTROL: {API_IS_LOOPBACK ? "LOCAL" : "NETWORK"}</span><span>ACCESS: NO SIGN-IN</span></footer>
   </main>;
 }
 
@@ -230,7 +326,33 @@ function NetworkMap({dashboard,online,clientIsPhone}:{dashboard:Dashboard|null;o
   </div>;
 }
 
-function ChatPanel({messages,input,setInput,sendMessage,busy}:{messages:ChatMessage[];input:string;setInput:(v:string)=>void;sendMessage:(e:FormEvent)=>void;busy:boolean}){return <section className="chat-panel hud-frame"><div className="c2-map-head"><div><span className="eyebrow">DIRECT CHANNEL</span><h2>CHIEF COMMAND INTERFACE</h2></div><div className="live-badge"><i/> {busy?"PROCESSING":"READY"}</div></div><div className="chat-stream">{messages.map((m,i)=><article key={i} className={`message ${m.role}`}><div className="message-tag">{m.role==="assistant"?"CHIEF":"OPERATOR"}</div><p>{m.content}</p></article>)}</div><form className="command-input" onSubmit={sendMessage}><TerminalSquare/><input value={input} onChange={e=>setInput(e.target.value)} placeholder="Issue directive to CHIEF..."/><button type="submit" disabled={busy}><Send/> TRANSMIT</button></form></section>}
+function ChatPanel({messages,input,setInput,sendMessage,busy,voice,appInstalled,installReady,installApp}:{messages:ChatMessage[];input:string;setInput:(v:string)=>void;sendMessage:(e:FormEvent)=>void;busy:boolean;voice:BrowserVoiceControls;appInstalled:boolean;installReady:boolean;installApp:()=>Promise<void>}) {
+  const audioActive = voice.listening || voice.speaking;
+  return <section className="chat-panel hud-frame">
+    <div className="c2-map-head"><div><span className="eyebrow">DIRECT CHANNEL</span><h2>CHIEF COMMAND INTERFACE</h2></div><div className="live-badge"><i/> {busy?"PROCESSING":voice.listening?"LISTENING":voice.speaking?"SPEAKING":"READY"}</div></div>
+    <div className="chat-stream">{messages.map((m,i)=><article key={i} className={`message ${m.role}`}><div className="message-tag">{m.role==="assistant"?"CHIEF":"OPERATOR"}</div><p>{m.content}</p></article>)}</div>
+    <div className={`voice-console ${audioActive ? "active" : ""}`}>
+      <div className="voice-actions">
+        <button type="button" className={voice.listening ? "voice-button listening" : "voice-button"} onClick={()=>voice.toggleListening(input)} disabled={!voice.inputAvailable || (busy && !voice.listening)} aria-pressed={voice.listening}>
+          {voice.listening?<MicOff/>:<Mic/>}<span>{voice.listening?"STOP INPUT":"PUSH TO TALK"}</span>
+        </button>
+        <button type="button" className={voice.ttsEnabled ? "voice-button enabled" : "voice-button"} onClick={voice.toggleTts} disabled={!voice.outputAvailable} aria-pressed={voice.ttsEnabled}>
+          {voice.ttsEnabled?<Volume2/>:<VolumeX/>}<span>{voice.ttsEnabled?"VOICE REPLIES ON":"VOICE REPLIES OFF"}</span>
+        </button>
+        <button type="button" className="voice-button stop" onClick={voice.stopAll} disabled={!audioActive}>
+          <Square/><span>STOP AUDIO</span>
+        </button>
+        {installReady && !appInstalled && <button type="button" className="voice-button install" onClick={()=>void installApp()}><Download/><span>INSTALL APP</span></button>}
+      </div>
+      <div className="voice-disclosure" role="status" aria-live="polite">
+        <strong className={`voice-status ${voice.status}`}>{voice.statusText}</strong>
+        <small>{voice.privacyText}</small>
+        <small className="pwa-state">APP: {appInstalled?"INSTALLED":installReady?"INSTALL READY":"INSTALL FROM BROWSER MENU"} · CAMERA: DISABLED</small>
+      </div>
+    </div>
+    <form className="command-input" onSubmit={sendMessage}><TerminalSquare/><input value={input} onChange={e=>setInput(e.target.value)} placeholder="Issue directive to CHIEF..."/><button type="submit" disabled={busy}><Send/> TRANSMIT</button></form>
+  </section>
+}
 function HeaderCell({label,value,sub,hot=false}:{label:string;value:string;sub?:string;hot?:boolean}){return <div className="header-cell"><span>{label}</span><strong className={hot?"teal":""}>{value}</strong>{sub&&<small>{sub}</small>}</div>}
 function Panel({title,children,className=""}:{title:string;children:React.ReactNode;className?:string}){return <section className={`panel hud-frame ${className}`}><div className="panel-title"><span>{title}</span><i/></div>{children}</section>}
 function Objective({name,status,primary}:{name:string;status:string;primary?:boolean}){return <div className={`objective ${primary?"primary":""}`}><span>{primary?"PRIMARY OBJECTIVE":"SECONDARY OBJECTIVE"}</span><strong>{name}</strong><small><i className="check"/> {status.toUpperCase()}</small></div>}

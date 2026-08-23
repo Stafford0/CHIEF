@@ -1,7 +1,9 @@
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from threading import RLock
 from uuid import UUID, uuid4
 
 from chief.core.tool_planner import PlannedToolCall
@@ -12,6 +14,7 @@ class PendingToolCall:
     """Immutable, expiring approval proposal bound to exact arguments."""
 
     call: PlannedToolCall
+    id: UUID = field(default_factory=uuid4)
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime = field(default_factory=lambda: datetime.now(UTC) + timedelta(minutes=5))
 
@@ -42,12 +45,29 @@ class ConversationSession:
     """Short-term conversational state for one CHIEF session."""
 
     id: UUID = field(default_factory=uuid4)
+    owner_id: str = "local"
     messages: list[SessionMessage] = field(default_factory=list)
     pending_tool_call: PendingToolCall | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     max_messages: int = 200
     max_message_chars: int = 20_000
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False)
+    _on_change: Callable[["ConversationSession"], None] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+
+    def set_change_callback(
+        self,
+        callback: Callable[["ConversationSession"], None] | None,
+    ) -> None:
+        self._on_change = callback
+
+    def _notify_change(self) -> None:
+        if self._on_change is not None:
+            self._on_change(self)
 
     def add_message(
         self,
@@ -64,28 +84,36 @@ class ConversationSession:
         if len(content) > self.max_message_chars:
             raise ValueError("Session message exceeds the configured size limit.")
 
-        message = SessionMessage(
-            role=role,
-            content=content,
-        )
-
-        self.messages.append(message)
-        if len(self.messages) > self.max_messages:
-            del self.messages[: len(self.messages) - self.max_messages]
-        self.updated_at = datetime.now(UTC)
+        message = SessionMessage(role=role, content=content)
+        with self._lock:
+            self.messages.append(message)
+            if len(self.messages) > self.max_messages:
+                del self.messages[: len(self.messages) - self.max_messages]
+            self.updated_at = datetime.now(UTC)
+        self._notify_change()
 
         return message
 
     def propose_tool(self, call: PlannedToolCall) -> PendingToolCall:
-        self.pending_tool_call = PendingToolCall(call=call)
-        self.updated_at = datetime.now(UTC)
-        return self.pending_tool_call
+        with self._lock:
+            self.pending_tool_call = PendingToolCall(call=call)
+            self.updated_at = datetime.now(UTC)
+            pending = self.pending_tool_call
+        self._notify_change()
+        return pending
 
     def take_pending_tool(self) -> PendingToolCall | None:
-        pending = self.pending_tool_call
-        self.pending_tool_call = None
-        self.updated_at = datetime.now(UTC)
+        """Atomically consume a proposal so concurrent approvals cannot run it twice."""
+        with self._lock:
+            pending = self.pending_tool_call
+            self.pending_tool_call = None
+            self.updated_at = datetime.now(UTC)
+        self._notify_change()
         return pending
+
+    def peek_pending_tool(self) -> PendingToolCall | None:
+        with self._lock:
+            return self.pending_tool_call
 
     def recent_messages(
         self,
@@ -96,7 +124,8 @@ class ConversationSession:
         if limit <= 0:
             return []
 
-        return self.messages[-limit:]
+        with self._lock:
+            return list(self.messages[-limit:])
 
     def build_context(
         self,

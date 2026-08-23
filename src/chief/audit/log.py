@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
+from uuid import uuid4
 
 
 @dataclass(frozen=True)
@@ -15,6 +16,16 @@ class AuditEvent:
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    event_id: str = field(default_factory=lambda: str(uuid4()))
+    request_id: str | None = None
+    actor_id: str | None = None
+    session_id: str | None = None
+    run_id: str | None = None
+    step_id: str | None = None
+    proposal_id: str | None = None
+    sequence: int | None = None
+    previous_hash: str | None = None
+    event_hash: str | None = None
 
 
 class AuditLog:

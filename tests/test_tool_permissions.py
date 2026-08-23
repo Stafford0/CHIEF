@@ -108,6 +108,12 @@ def test_approved_execution_is_audited() -> None:
         "sensitive_test",
         {},
         approved=True,
+        audit_context={
+            "request_id": "request-1",
+            "actor_id": "operator-1",
+            "session_id": "session-1",
+            "proposal_id": "proposal-1",
+        },
     )
 
     event = audit_log.latest()
@@ -115,6 +121,12 @@ def test_approved_execution_is_audited() -> None:
     assert event.decision == PolicyDecision.ALLOW.value
     assert event.approved is True
     assert event.success is True
+    assert event.request_id == "request-1"
+    assert event.actor_id == "operator-1"
+    assert event.session_id == "session-1"
+    assert event.proposal_id == "proposal-1"
+    assert len(event.metadata["argument_digest"]) == 64
+    assert len(event.metadata["result_digest"]) == 64
 
 
 def test_unknown_tool_attempt_is_audited_as_denied() -> None:

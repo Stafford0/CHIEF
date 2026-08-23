@@ -49,7 +49,7 @@ def test_read_tool_is_safe_and_does_not_require_approval(tmp_path) -> None:
 def test_read_tool_rejects_non_allowlisted_command(tmp_path) -> None:
     tool = PowerShellReadTool([tmp_path], executable="pwsh")
 
-    result = tool.run({"command": "Remove-Item", "args": ["thing.txt"]})
+    result = tool.run({"command": "Remove-Item"})
 
     assert result.success is False
     assert "read-only allowlist" in (result.error or "")
@@ -61,7 +61,21 @@ def test_read_tool_rejects_shell_operators(tmp_path) -> None:
     result = tool.run({"command": "Get-Process", "args": [";", "Remove-Item"]})
 
     assert result.success is False
-    assert "operators" in (result.error or "")
+    assert "arguments are disabled" in (result.error or "")
+
+
+def test_read_tool_rejects_powershell_subexpression_injection(tmp_path) -> None:
+    tool = PowerShellReadTool([tmp_path], executable="pwsh")
+
+    result = tool.run(
+        {
+            "command": "Get-Date",
+            "args": ["$([IO.File]::WriteAllText('owned.txt','yes'))"],
+        }
+    )
+
+    assert result.success is False
+    assert "arguments are disabled" in (result.error or "")
 
 
 def test_command_tool_requires_registry_approval(tmp_path) -> None:
@@ -113,7 +127,7 @@ def test_command_tool_executes_after_explicit_approval(tmp_path) -> None:
 
     assert result.success is True
     assert "82 passed" in result.content
-    assert calls[0][-2:] == ["pytest", "-q"]
+    assert calls[0] == ["pytest", "-q"]
 
 
 def test_command_tool_blocks_destructive_git_reset_even_with_approval(tmp_path) -> None:

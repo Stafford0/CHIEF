@@ -20,6 +20,7 @@ class SystemStatusTool(Tool):
             description=("Report CHIEF runtime status and basic environment information."),
             risk=ToolRisk.SAFE,
             requires_approval=False,
+            timeout_seconds=5,
         )
 
     def validate(

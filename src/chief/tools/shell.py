@@ -39,6 +39,19 @@ class ShellCommandTool(Tool):
             description="Run an approved command from a restricted diagnostic allowlist.",
             risk=ToolRisk.SENSITIVE,
             requires_approval=True,
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "enum": sorted(self.allowed_commands)},
+                    "args": {"type": "array", "items": {"type": "string"}, "maxItems": 50},
+                    "cwd": {"type": "string", "minLength": 1},
+                },
+                "required": ["command"],
+                "additionalProperties": False,
+            },
+            side_effects=True,
+            idempotent=False,
+            timeout_seconds=self.timeout_seconds,
         )
 
     def _working_directory(self, value: object) -> Path:

@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class MemoryType(str, Enum):
@@ -14,12 +14,30 @@ class MemoryType(str, Enum):
     PROCEDURAL = "procedural"
 
 
+class MemoryScope(str, Enum):
+    PERSONAL = "personal"
+    ORGANIZATION = "organization"
+    PROJECT = "project"
+    SESSION = "session"
+
+
+class MemorySensitivity(str, Enum):
+    PUBLIC = "public"
+    INTERNAL = "internal"
+    CONFIDENTIAL = "confidential"
+    RESTRICTED = "restricted"
+
+
 class MemorySource(BaseModel):
     """Where a memory came from."""
 
     source_type: str
     source_id: str | None = None
     description: str | None = None
+    uri: str | None = None
+    observed_at: datetime | None = None
+    retrieved_at: datetime | None = None
+    content_digest: str | None = Field(default=None, pattern=r"^[a-fA-F0-9]{64}$")
 
 
 class MemoryRecord(BaseModel):
@@ -34,6 +52,12 @@ class MemoryRecord(BaseModel):
 
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     importance: float = Field(default=0.5, ge=0.0, le=1.0)
+    scope: MemoryScope = MemoryScope.PERSONAL
+    scope_id: str | None = Field(default=None, max_length=256)
+    sensitivity: MemorySensitivity = MemorySensitivity.INTERNAL
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+    expires_at: datetime | None = None
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -60,3 +84,9 @@ class MemoryRecord(BaseModel):
             if tag and tag not in normalized:
                 normalized.append(tag[:64])
         return normalized
+
+    @model_validator(mode="after")
+    def validate_temporal_window(self) -> "MemoryRecord":
+        if self.valid_from and self.valid_until and self.valid_until <= self.valid_from:
+            raise ValueError("Memory valid_until must be after valid_from.")
+        return self

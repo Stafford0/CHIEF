@@ -57,7 +57,10 @@ class MemoryRetriever:
             raise ValueError("Memory retrieval limit cannot exceed 50.")
         if not 0 <= minimum_score <= 1.3:
             raise ValueError("Memory minimum score is out of range.")
-        memories = self.store.list_active(limit=1000)
+        search = getattr(self.store, "search_text", None)
+        memories = (
+            search(query, limit=1000) if callable(search) else self.store.list_active(limit=1000)
+        )
 
         scored = [
             RetrievedMemory(

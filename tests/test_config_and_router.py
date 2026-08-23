@@ -5,18 +5,34 @@ import pytest
 from chief.core.config import Settings
 from chief.core.session import PendingToolCall
 from chief.core.tool_planner import PlannedToolCall
-from chief.models.base import ModelProvider, ModelResponse
+from chief.models.base import (
+    ModelCapabilities,
+    ModelPrivacy,
+    ModelProvider,
+    ModelResponse,
+    RouteRequirements,
+)
 from chief.models.router import ModelRouter
 
 
 class FakeProvider(ModelProvider):
-    def __init__(self, name: str, error: str | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        error: str | None = None,
+        capabilities: ModelCapabilities | None = None,
+    ) -> None:
         self._name = name
         self.error = error
+        self._capabilities = capabilities or ModelCapabilities()
 
     @property
     def name(self) -> str:
         return self._name
+
+    @property
+    def capabilities(self) -> ModelCapabilities:
+        return self._capabilities
 
     def generate(self, prompt: str, system_prompt: str | None = None) -> ModelResponse:
         if self.error:
@@ -35,6 +51,31 @@ def test_private_lan_is_opt_in(monkeypatch):
     assert Settings.from_env().allow_private_lan_ui is False
 
 
+def test_private_lan_requires_strong_api_token(monkeypatch):
+    monkeypatch.setenv("CHIEF_ALLOW_PRIVATE_LAN_UI", "true")
+    monkeypatch.delenv("CHIEF_API_TOKEN", raising=False)
+    with pytest.raises(ValueError, match="CHIEF_API_TOKEN is required"):
+        Settings.from_env()
+
+
+def test_api_token_rejects_short_secret(monkeypatch):
+    monkeypatch.setenv("CHIEF_API_TOKEN", "too-short")
+    with pytest.raises(ValueError, match="at least 32 bytes"):
+        Settings.from_env()
+
+
+def test_execution_kill_switch_and_rate_limit_are_validated(monkeypatch):
+    monkeypatch.setenv("CHIEF_EXECUTION_ENABLED", "false")
+    monkeypatch.setenv("CHIEF_REMOTE_RATE_LIMIT_PER_MINUTE", "7")
+    settings = Settings.from_env()
+    assert settings.execution_enabled is False
+    assert settings.remote_rate_limit_per_minute == 7
+
+    monkeypatch.setenv("CHIEF_EXECUTION_ENABLED", "sometimes")
+    with pytest.raises(ValueError, match="must be true or false"):
+        Settings.from_env()
+
+
 def test_router_falls_back_and_records_attempts():
     router = ModelRouter([FakeProvider("bad", "offline"), FakeProvider("good")])
     assert router.generate("hello").provider == "good"
@@ -44,6 +85,48 @@ def test_router_falls_back_and_records_attempts():
 def test_router_requires_provider():
     with pytest.raises(ValueError):
         ModelRouter([])
+
+
+def test_router_filters_by_capability_and_privacy():
+    cloud = FakeProvider("cloud", capabilities=ModelCapabilities())
+    local = FakeProvider(
+        "local",
+        capabilities=ModelCapabilities(
+            privacy=ModelPrivacy.LOCAL,
+            structured_output=True,
+            cost_tier=0,
+        ),
+    )
+    router = ModelRouter([cloud, local])
+    requirements = RouteRequirements(
+        allowed_privacy=frozenset({ModelPrivacy.LOCAL}),
+        structured_output=True,
+        max_cost_tier=0,
+    )
+
+    assert router.generate("hello", requirements=requirements).provider == "local"
+
+
+def test_router_opens_and_recovers_circuit_breaker():
+    clock = [0.0]
+    provider = FakeProvider("unstable", error="offline")
+    router = ModelRouter(
+        [provider],
+        failure_threshold=1,
+        cooldown_seconds=10,
+        clock=lambda: clock[0],
+    )
+
+    with pytest.raises(RuntimeError, match="offline"):
+        router.generate("first")
+    with pytest.raises(RuntimeError, match="cooling down"):
+        router.generate("second")
+    assert router.last_attempts[0].skipped is True
+
+    provider.error = None
+    clock[0] = 11
+    assert router.generate("third").provider == "unstable"
+    assert router.provider_states()[0]["circuit_open"] is False
 
 
 def test_pending_tool_digest_binds_exact_arguments():

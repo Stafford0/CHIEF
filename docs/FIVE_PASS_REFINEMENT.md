@@ -81,6 +81,13 @@ Key sources: [OpenAI Responses](https://developers.openai.com/api/reference/cli/
 11. Formatted the full Python codebase consistently.
 12. Verified all Python tests, lint, dependency audit, and frontend production build.
 
-## Deliberately deferred architecture
+## Subsequent expansion
 
-The next major milestone should be a durable SQLite-backed run/checkpoint store with idempotent steps, cancellation, replay, and persisted approvals. Then add schema-driven model tool selection, an MCP client with audience-bound OAuth, user-scoped memory retention controls, authenticated remote/mobile access, and optional voice/vision adapters. These are intentionally not rushed into CHIEF ZERO because they require larger migrations, credentials, or operator policy decisions.
+The durable run/checkpoint store, schema-driven bounded plans, persistent chat approvals,
+scoped temporal memory, protected remote/PWA boundary, and voice-provider interfaces originally
+listed here as deferred work have since been implemented. The remaining production roadmap is
+maintained in `docs/BEST_IN_CLASS_CHECKLIST.md`; it prioritizes live evidence connectors,
+supervised always-on workers, a complete persistent plan-approval experience, production model
+and streaming-voice adapters, isolated browser use, encrypted secrets/backups, and real-workload
+evaluations. Those items require external credentials, owner policy, infrastructure, or staged
+security validation and are not represented as complete.

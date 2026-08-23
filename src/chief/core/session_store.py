@@ -1,6 +1,7 @@
+from threading import RLock
 from uuid import UUID
 
-from chief.core.session import ConversationSession
+from chief.core.session import ConversationSession, PendingToolCall
 
 
 class SessionStore:
@@ -8,12 +9,14 @@ class SessionStore:
 
     def __init__(self) -> None:
         self._sessions: dict[UUID, ConversationSession] = {}
+        self._lock = RLock()
 
-    def create(self) -> ConversationSession:
+    def create(self, owner_id: str = "local") -> ConversationSession:
         """Create and register a new conversation session."""
 
-        session = ConversationSession()
-        self._sessions[session.id] = session
+        session = ConversationSession(owner_id=owner_id)
+        with self._lock:
+            self._sessions[session.id] = session
 
         return session
 
@@ -23,21 +26,26 @@ class SessionStore:
     ) -> ConversationSession | None:
         """Retrieve a session by ID."""
 
-        return self._sessions.get(session_id)
+        with self._lock:
+            return self._sessions.get(session_id)
 
     def get_or_create(
         self,
         session_id: UUID | None = None,
+        *,
+        owner_id: str = "local",
     ) -> ConversationSession:
         """Retrieve an existing session or create a new one."""
 
         if session_id is None:
-            return self.create()
+            return self.create(owner_id)
 
         session = self.get(session_id)
 
         if session is None:
             raise KeyError(f"Conversation session {session_id} does not exist.")
+        if session.owner_id != owner_id:
+            raise PermissionError("Conversation session belongs to another operator.")
 
         return session
 
@@ -47,23 +55,30 @@ class SessionStore:
     ) -> bool:
         """Delete a conversation session."""
 
-        if session_id not in self._sessions:
-            return False
+        with self._lock:
+            if session_id not in self._sessions:
+                return False
+            del self._sessions[session_id]
+            return True
 
-        del self._sessions[session_id]
-        return True
-
-    def count(self) -> int:
+    def count(self, owner_id: str | None = None) -> int:
         """Return the number of active sessions."""
 
-        return len(self._sessions)
+        with self._lock:
+            if owner_id is None:
+                return len(self._sessions)
+            return sum(session.owner_id == owner_id for session in self._sessions.values())
 
-    def pending_tool_calls(self) -> list[dict[str, str]]:
+    def pending_tool_calls(self, owner_id: str = "local") -> list[dict[str, str]]:
         """Return live approval-gated tool calls waiting in active sessions."""
 
         pending: list[dict[str, str]] = []
-        for session in self._sessions.values():
-            call = session.pending_tool_call
+        with self._lock:
+            sessions = list(self._sessions.values())
+        for session in sessions:
+            if session.owner_id != owner_id:
+                continue
+            call = session.peek_pending_tool()
             if call is None:
                 continue
             pending.append(
@@ -71,27 +86,35 @@ class SessionStore:
                     "name": call.call.description,
                     "tool": call.call.tool_name,
                     "status": "awaiting approval",
-                    "session_id": str(session.id),
-                    "approval_digest": call.digest[:12],
                     "expires_at": call.expires_at.isoformat(),
                 }
             )
         return pending
 
-    def summaries(self) -> list[dict[str, str | int]]:
+    def take_pending_tool(
+        self,
+        session_id: UUID,
+        *,
+        owner_id: str = "local",
+    ) -> PendingToolCall | None:
+        session = self.get_or_create(session_id, owner_id=owner_id)
+        return session.take_pending_tool()
+
+    def summaries(self, owner_id: str = "local") -> list[dict[str, str | int]]:
         """Return lightweight live summaries for active sessions."""
 
+        with self._lock:
+            sessions = list(self._sessions.values())
         return [
             {
-                "session_id": str(session.id),
                 "messages": len(session.messages),
                 "status": (
-                    "awaiting approval" if session.pending_tool_call is not None else "active"
+                    "awaiting approval" if session.peek_pending_tool() is not None else "active"
                 ),
                 "updated_at": session.updated_at.isoformat(),
             }
             for session in sorted(
-                self._sessions.values(),
+                (item for item in sessions if item.owner_id == owner_id),
                 key=lambda item: item.updated_at,
                 reverse=True,
             )

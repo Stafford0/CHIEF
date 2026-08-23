@@ -134,3 +134,13 @@ def test_sessions_are_isolated() -> None:
 
     assert "Nightfall" in context_b
     assert "Falcon" not in context_b
+
+
+def test_store_scopes_session_to_owner() -> None:
+    store = SessionStore()
+    session = store.create(owner_id="operator-a")
+
+    with pytest.raises(PermissionError):
+        store.get_or_create(session.id, owner_id="operator-b")
+
+    assert store.get_or_create(session.id, owner_id="operator-a") is session

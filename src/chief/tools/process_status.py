@@ -30,6 +30,7 @@ class ProcessStatusTool(Tool):
             name="process_status",
             description="Report a read-only snapshot of running processes.",
             risk=ToolRisk.SAFE,
+            timeout_seconds=10,
         )
 
     def validate(self, arguments: dict[str, Any]) -> None:

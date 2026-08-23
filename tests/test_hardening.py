@@ -1,8 +1,12 @@
+from dataclasses import replace
+
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from chief.core import app as app_module
 from chief.core.app import app
+from chief.core.rate_limit import SlidingWindowRateLimiter
 from chief.core.session import ConversationSession
 from chief.memory.schema import MemoryRecord, MemorySource, MemoryType
 
@@ -16,6 +20,120 @@ def test_operational_headers_and_request_id():
 
 def test_readiness_is_separate_from_liveness():
     assert TestClient(app).get("/ready").json()["status"] == "ready"
+
+
+def test_configured_api_token_protects_non_health_routes(monkeypatch):
+    token = "a" * 32
+    monkeypatch.setattr(app_module, "settings", replace(app_module.settings, api_token=token))
+    client = TestClient(app)
+
+    assert client.get("/health").status_code == 200
+    assert client.get("/ready").status_code == 401
+    assert client.get("/system").status_code == 401
+    assert client.get("/system", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+
+
+def test_remote_client_is_denied_when_lan_mode_is_off(monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "settings",
+        replace(app_module.settings, allow_private_lan_ui=False, api_token=None),
+    )
+    client = TestClient(app, client=("192.168.1.50", 50_000))
+
+    assert client.get("/health").status_code == 200
+    assert client.get("/dashboard").status_code == 403
+
+
+def test_remote_authenticated_clients_are_rate_limited(monkeypatch):
+    token = "b" * 32
+    monkeypatch.setattr(
+        app_module,
+        "settings",
+        replace(
+            app_module.settings,
+            allow_private_lan_ui=True,
+            api_token=token,
+        ),
+    )
+    monkeypatch.setattr(app_module, "_remote_rate_limiter", SlidingWindowRateLimiter(1))
+    client = TestClient(app, client=("192.168.1.51", 50_001))
+    headers = {"Authorization": f"Bearer {token}"}
+
+    assert client.get("/system", headers=headers).status_code == 200
+    denied = client.get("/system", headers=headers)
+    assert denied.status_code == 429
+    assert denied.headers["retry-after"] == "60"
+
+
+def test_lan_mode_still_denies_public_network_clients(monkeypatch):
+    token = "c" * 32
+    monkeypatch.setattr(
+        app_module,
+        "settings",
+        replace(app_module.settings, allow_private_lan_ui=True, api_token=token),
+    )
+    client = TestClient(app, client=("8.8.8.8", 50_002))
+
+    response = client.get("/system", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 403
+    assert "private-network" in response.json()["detail"]
+
+
+def test_private_lan_origin_validation_covers_full_rfc1918_ranges(monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "settings",
+        replace(app_module.settings, allow_private_lan_ui=True),
+    )
+    assert app_module._origin_allowed("http://10.42.0.1:5173") is True
+    assert app_module._origin_allowed("http://172.31.255.255:5173") is True
+    assert app_module._origin_allowed("http://192.168.1.9:5173") is True
+    assert app_module._origin_allowed("http://192.168.999.9:5173") is False
+
+
+def test_readiness_fails_closed_when_a_store_check_raises(monkeypatch):
+    def unavailable():
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(app_module.memory_store, "health", unavailable)
+    response = TestClient(app).get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["checks"]["memory"] is False
+
+
+def test_execution_kill_switch_blocks_actions(monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "settings",
+        replace(app_module.settings, execution_enabled=False),
+    )
+    response = TestClient(app).post(
+        "/tools/execute",
+        json={"name": "system_status", "arguments": {}},
+    )
+
+    assert response.status_code == 503
+    assert "kill switch" in response.json()["detail"]
+
+
+def test_audit_integrity_and_pagination_endpoints():
+    client = TestClient(app)
+    assert client.get("/audit/integrity").json()["valid"] is True
+    assert client.get("/audit/events", params={"limit": 0}).status_code == 422
+
+
+def test_oversized_request_bodies_are_rejected_before_parsing():
+    response = TestClient(app).post(
+        "/chat",
+        content=b"x" * (app_module.settings.max_request_bytes + 1),
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 413
+    assert "configured CHIEF limit" in response.json()["detail"]
+    assert response.headers["x-content-type-options"] == "nosniff"
 
 
 def test_session_rejects_empty_and_large_messages():

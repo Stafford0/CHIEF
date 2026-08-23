@@ -1,4 +1,12 @@
-from chief.memory.schema import MemoryRecord, MemorySource, MemoryType
+from datetime import UTC, datetime, timedelta
+
+from chief.memory.schema import (
+    MemoryRecord,
+    MemoryScope,
+    MemorySensitivity,
+    MemorySource,
+    MemoryType,
+)
 from chief.memory.sqlite import SQLiteMemoryStore
 
 
@@ -84,3 +92,38 @@ def test_delete_memory(tmp_path) -> None:
 
     assert store.delete(memory.id) is True
     assert store.get(memory.id) is None
+
+
+def test_memory_scope_sensitivity_and_expiry_persist(tmp_path) -> None:
+    store = SQLiteMemoryStore(tmp_path / "test_chief.db")
+    memory = make_memory()
+    memory.scope = MemoryScope.PROJECT
+    memory.scope_id = "chief"
+    memory.sensitivity = MemorySensitivity.CONFIDENTIAL
+    memory.expires_at = datetime.now(UTC) + timedelta(hours=1)
+    store.save(memory)
+
+    stored = store.get(memory.id)
+    assert stored is not None
+    assert stored.scope == MemoryScope.PROJECT
+    assert stored.scope_id == "chief"
+    assert stored.sensitivity == MemorySensitivity.CONFIDENTIAL
+    assert store.list_active(scope="project", scope_id="chief")[0].id == memory.id
+
+
+def test_expired_memory_is_not_active_or_searchable(tmp_path) -> None:
+    store = SQLiteMemoryStore(tmp_path / "test_chief.db")
+    memory = make_memory()
+    memory.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    store.save(memory)
+
+    assert store.list_active() == []
+    assert store.search_text("provider model") == []
+
+
+def test_fts_search_returns_matching_memory(tmp_path) -> None:
+    store = SQLiteMemoryStore(tmp_path / "test_chief.db")
+    memory = make_memory()
+    store.save(memory)
+
+    assert store.search_text("provider routing")[0].id == memory.id

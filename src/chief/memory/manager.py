@@ -1,5 +1,13 @@
+from datetime import datetime
+
 from chief.memory.retrieval import MemoryRetriever
-from chief.memory.schema import MemoryRecord, MemorySource, MemoryType
+from chief.memory.schema import (
+    MemoryRecord,
+    MemoryScope,
+    MemorySensitivity,
+    MemorySource,
+    MemoryType,
+)
 from chief.memory.store import MemoryStore
 
 
@@ -21,6 +29,10 @@ class MemoryManager:
         confidence: float = 1.0,
         importance: float = 0.5,
         tags: list[str] | None = None,
+        scope: MemoryScope = MemoryScope.PERSONAL,
+        scope_id: str | None = None,
+        sensitivity: MemorySensitivity = MemorySensitivity.INTERNAL,
+        expires_at: datetime | None = None,
     ) -> MemoryRecord:
         """Create and persist a memory."""
 
@@ -35,6 +47,10 @@ class MemoryManager:
             confidence=confidence,
             importance=importance,
             tags=tags or [],
+            scope=scope,
+            scope_id=scope_id,
+            sensitivity=sensitivity,
+            expires_at=expires_at,
         )
 
         return self.store.save(memory)
@@ -74,6 +90,12 @@ class MemoryManager:
             confidence=confidence,
             importance=(old_memory.importance if importance is None else importance),
             tags=old_memory.tags if tags is None else tags,
+            scope=old_memory.scope,
+            scope_id=old_memory.scope_id,
+            sensitivity=old_memory.sensitivity,
+            valid_from=old_memory.valid_from,
+            valid_until=old_memory.valid_until,
+            expires_at=old_memory.expires_at,
             supersedes=old_memory.id,
         )
 

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#061013" />
+    <title>CHIEF Offline</title>
+    <style>
+      :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; background: #010506; color: #aebfc0; }
+      main { width: min(520px, 100%); padding: 32px; border: 1px solid #1b4a4d; background: #061013; box-shadow: 0 0 50px rgba(20, 216, 209, .06); }
+      h1 { margin: 0 0 12px; color: #55d3cc; font-size: 24px; letter-spacing: .16em; }
+      p { line-height: 1.55; }
+      small { display: block; margin-top: 18px; color: #6d8284; }
+      button { margin-top: 20px; min-height: 44px; padding: 0 18px; border: 1px solid #2b7779; background: #07191b; color: #7cdbd5; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>CHIEF OFFLINE</h1>
+      <p>The command center shell is available, but CHIEF Core cannot be reached. Reconnect to the local or protected network before sending commands.</p>
+      <button type="button" onclick="location.reload()">Retry connection</button>
+      <small>No conversations, API responses, approvals, or private telemetry are stored in the offline cache.</small>
+    </main>
+  </body>
+</html>

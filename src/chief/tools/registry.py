@@ -1,6 +1,7 @@
 import hashlib
 import json
 import time
+from typing import Any
 
 from chief.audit.log import AuditEvent, AuditLog
 from chief.guard.policy import PolicyDecision, ToolPolicy
@@ -63,12 +64,36 @@ class ToolRegistry:
         arguments: dict,
         *,
         approved: bool = False,
+        audit_context: dict[str, str | None] | None = None,
     ) -> ToolResult:
         """Evaluate policy, execute a registered tool, and audit the attempt."""
         started = time.perf_counter()
         argument_digest = hashlib.sha256(
             json.dumps(arguments, sort_keys=True, default=str).encode()
         ).hexdigest()
+        context = audit_context or {}
+
+        def event(
+            *,
+            decision: str,
+            success: bool,
+            error: str | None,
+            metadata: dict[str, Any] | None = None,
+        ) -> AuditEvent:
+            return AuditEvent(
+                tool_name=name,
+                approved=approved,
+                decision=decision,
+                success=success,
+                error=error,
+                metadata=metadata or {},
+                request_id=context.get("request_id"),
+                actor_id=context.get("actor_id"),
+                session_id=context.get("session_id"),
+                run_id=context.get("run_id"),
+                step_id=context.get("step_id"),
+                proposal_id=context.get("proposal_id"),
+            )
 
         tool = self.get(name)
 
@@ -79,12 +104,11 @@ class ToolRegistry:
                 error=(f"Tool '{name}' is not registered."),
             )
             self.audit_log.record(
-                AuditEvent(
-                    tool_name=name,
-                    approved=approved,
+                event(
                     decision=PolicyDecision.DENY.value,
                     success=False,
                     error=result.error,
+                    metadata={"argument_digest": argument_digest},
                 )
             )
             return result
@@ -101,12 +125,11 @@ class ToolRegistry:
                 error=policy_result.reason,
             )
             self.audit_log.record(
-                AuditEvent(
-                    tool_name=name,
-                    approved=approved,
+                event(
                     decision=policy_result.decision.value,
                     success=False,
                     error=result.error,
+                    metadata={"argument_digest": argument_digest},
                 )
             )
             return result
@@ -118,26 +141,36 @@ class ToolRegistry:
                 error=policy_result.reason,
             )
             self.audit_log.record(
-                AuditEvent(
-                    tool_name=name,
-                    approved=approved,
+                event(
                     decision=policy_result.decision.value,
                     success=False,
                     error=result.error,
+                    metadata={"argument_digest": argument_digest},
                 )
             )
             return result
 
         result = tool.run(arguments)
+        result_digest = hashlib.sha256(
+            json.dumps(
+                {
+                    "success": result.success,
+                    "content": result.content,
+                    "data": result.data,
+                    "error": result.error,
+                },
+                sort_keys=True,
+                default=str,
+            ).encode()
+        ).hexdigest()
         self.audit_log.record(
-            AuditEvent(
-                tool_name=name,
-                approved=approved,
+            event(
                 decision=policy_result.decision.value,
                 success=result.success,
                 error=result.error,
                 metadata={
                     "argument_digest": argument_digest,
+                    "result_digest": result_digest,
                     "duration_ms": round((time.perf_counter() - started) * 1000, 3),
                 },
             )

@@ -2,7 +2,7 @@ import json
 import time
 from urllib import error, request
 
-from chief.models.base import ModelProvider, ModelResponse
+from chief.models.base import ModelCapabilities, ModelPrivacy, ModelProvider, ModelResponse
 
 
 class OllamaProvider(ModelProvider):
@@ -23,6 +23,18 @@ class OllamaProvider(ModelProvider):
     @property
     def name(self) -> str:
         return "ollama"
+
+    @property
+    def capabilities(self) -> ModelCapabilities:
+        return ModelCapabilities(
+            privacy=ModelPrivacy.LOCAL,
+            structured_output=False,
+            tool_calling=False,
+            streaming=False,
+            vision=False,
+            audio=False,
+            cost_tier=0,
+        )
 
     def generate(
         self,

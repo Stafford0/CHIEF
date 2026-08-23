@@ -20,6 +20,12 @@ class ToolDefinition:
     description: str
     risk: ToolRisk = ToolRisk.SAFE
     requires_approval: bool = False
+    input_schema: dict[str, Any] = field(
+        default_factory=lambda: {"type": "object", "properties": {}, "additionalProperties": False}
+    )
+    side_effects: bool = False
+    idempotent: bool = True
+    timeout_seconds: int = 30
 
 
 @dataclass(frozen=True)

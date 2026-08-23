@@ -9,7 +9,7 @@ from typing import Any
 
 from chief.tools.base import Tool, ToolDefinition, ToolResult, ToolRisk
 
-_UNSAFE_TOKEN = re.compile(r"[;&|<>`\r\n]")
+_UNSAFE_TOKEN = re.compile(r"[;&|<>`$\r\n]")
 
 
 class _PowerShellBase(Tool):
@@ -131,26 +131,33 @@ class PowerShellReadTool(_PowerShellBase):
             description="Run allowlisted read-only PowerShell diagnostics.",
             risk=ToolRisk.SAFE,
             requires_approval=False,
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "enum": sorted(self.allowed_commands)},
+                    "cwd": {"type": "string", "minLength": 1},
+                },
+                "required": ["command"],
+                "additionalProperties": False,
+            },
+            timeout_seconds=self.timeout_seconds,
         )
 
     def validate(self, arguments: dict[str, Any]) -> None:
         super().validate(arguments)
-        if set(arguments) - {"command", "args", "cwd"}:
-            raise ValueError("powershell_read accepts only command, args, and cwd.")
+        if set(arguments) - {"command", "cwd"}:
+            raise ValueError(
+                "powershell_read accepts only command and cwd; arguments are disabled."
+            )
         command = arguments.get("command")
         if not isinstance(command, str) or command not in self.allowed_commands:
             raise PermissionError("PowerShell command is not in the read-only allowlist.")
-        args = arguments.get("args", [])
-        if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
-            raise TypeError("Argument 'args' must be a list of strings.")
-        if any(_UNSAFE_TOKEN.search(arg) for arg in args):
-            raise PermissionError("PowerShell operators and redirection are not permitted.")
         self._working_directory(arguments.get("cwd"))
 
     def execute(self, arguments: dict[str, Any]) -> ToolResult:
         return self._run(
             arguments["command"],
-            arguments.get("args", []),
+            [],
             self._working_directory(arguments.get("cwd")),
         )
 
@@ -208,6 +215,19 @@ class PowerShellCommandTool(_PowerShellBase):
             description="Run an explicitly approved developer command through PowerShell.",
             risk=ToolRisk.SENSITIVE,
             requires_approval=True,
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "enum": sorted(self.allowed_commands)},
+                    "args": {"type": "array", "items": {"type": "string"}, "maxItems": 100},
+                    "cwd": {"type": "string", "minLength": 1},
+                },
+                "required": ["command"],
+                "additionalProperties": False,
+            },
+            side_effects=True,
+            idempotent=False,
+            timeout_seconds=self.timeout_seconds,
         )
 
     def validate(self, arguments: dict[str, Any]) -> None:
@@ -230,8 +250,32 @@ class PowerShellCommandTool(_PowerShellBase):
         self._working_directory(arguments.get("cwd"))
 
     def execute(self, arguments: dict[str, Any]) -> ToolResult:
-        return self._run(
-            arguments["command"],
-            arguments.get("args", []),
-            self._working_directory(arguments.get("cwd")),
+        command = [arguments["command"], *arguments.get("args", [])]
+        cwd = self._working_directory(arguments.get("cwd"))
+        completed = self.runner(
+            command,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            shell=False,
+            timeout=self.timeout_seconds,
+            check=False,
+        )
+        stdout = completed.stdout[: self.max_output_chars]
+        stderr = completed.stderr[: self.max_output_chars]
+        return ToolResult(
+            success=completed.returncode == 0,
+            content=stdout or stderr or f"Command exited with code {completed.returncode}.",
+            data={
+                "command": command,
+                "cwd": str(cwd),
+                "returncode": completed.returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+                "truncated": len(completed.stdout) > self.max_output_chars
+                or len(completed.stderr) > self.max_output_chars,
+            },
+            error=None
+            if completed.returncode == 0
+            else (stderr or f"Command exited with code {completed.returncode}."),
         )

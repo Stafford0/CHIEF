@@ -40,6 +40,11 @@ class ListDirectoryTool(ScopedFilesystemTool):
             name="list_directory",
             description="List entries in a directory inside an allowed root.",
             risk=ToolRisk.SAFE,
+            input_schema={
+                "type": "object",
+                "properties": {"path": {"type": "string", "minLength": 1}},
+                "additionalProperties": False,
+            },
         )
 
     def validate(self, arguments: dict[str, Any]) -> None:
@@ -83,6 +88,12 @@ class ReadFileTool(ScopedFilesystemTool):
             name="read_file",
             description="Read a UTF-8 text file inside an allowed root.",
             risk=ToolRisk.SAFE,
+            input_schema={
+                "type": "object",
+                "properties": {"path": {"type": "string", "minLength": 1}},
+                "required": ["path"],
+                "additionalProperties": False,
+            },
         )
 
     def validate(self, arguments: dict[str, Any]) -> None:
@@ -123,6 +134,16 @@ class SearchFilesTool(ScopedFilesystemTool):
             name="search_files",
             description="Search text files inside an allowed root.",
             risk=ToolRisk.SAFE,
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "minLength": 1},
+                    "query": {"type": "string", "minLength": 1},
+                    "pattern": {"type": "string", "minLength": 1},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
         )
 
     def validate(self, arguments: dict[str, Any]) -> None:
