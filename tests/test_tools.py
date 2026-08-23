@@ -145,9 +145,7 @@ def test_tool_rejects_invalid_argument_type() -> None:
     )
 
     assert result.success is False
-    assert result.error == (
-        "Argument 'text' must be a string."
-    )
+    assert result.error == ("Argument 'text' must be a string.")
 
 
 def test_approval_tool_cannot_execute() -> None:
@@ -162,9 +160,7 @@ def test_approval_tool_cannot_execute() -> None:
     )
 
     assert result.success is False
-    assert result.content == (
-        "Tool execution requires approval."
-    )
+    assert result.content == ("Tool execution requires approval.")
     assert tool.executed is False
 
 

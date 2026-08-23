@@ -54,9 +54,7 @@ class Tool(ABC):
         """Validate arguments before execution."""
 
         if not isinstance(arguments, dict):
-            raise TypeError(
-                "Tool arguments must be a dictionary."
-            )
+            raise TypeError("Tool arguments must be a dictionary.")
 
     def run(
         self,
@@ -68,7 +66,7 @@ class Tool(ABC):
             self.validate(arguments)
             return self.execute(arguments)
 
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - tool gateway must contain adapter failures
             return ToolResult(
                 success=False,
                 content="Tool execution failed.",

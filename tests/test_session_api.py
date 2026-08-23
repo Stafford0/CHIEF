@@ -106,9 +106,7 @@ def test_same_session_receives_previous_context(
     first_response = client.post(
         "/chat",
         json={
-            "message": (
-                "My test vehicle is called Falcon."
-            ),
+            "message": ("My test vehicle is called Falcon."),
         },
     )
 
@@ -117,24 +115,16 @@ def test_same_session_receives_previous_context(
     client.post(
         "/chat",
         json={
-            "message": (
-                "What did I call my test vehicle?"
-            ),
+            "message": ("What did I call my test vehicle?"),
             "session_id": session_id,
         },
     )
 
     second_call = model_provider.calls[1]
 
-    assert (
-        "USER: My test vehicle is called Falcon."
-        in second_call["system_prompt"]
-    )
+    assert "USER: My test vehicle is called Falcon." in second_call["system_prompt"]
 
-    assert (
-        "CHIEF: Test response"
-        in second_call["system_prompt"]
-    )
+    assert "CHIEF: Test response" in second_call["system_prompt"]
 
 
 def test_different_sessions_are_isolated(
@@ -149,37 +139,27 @@ def test_different_sessions_are_isolated(
     first_response = client.post(
         "/chat",
         json={
-            "message": (
-                "My test vehicle is called Falcon."
-            ),
+            "message": ("My test vehicle is called Falcon."),
         },
     )
 
-    first_session_id = (
-        first_response.json()["session_id"]
-    )
+    first_session_id = first_response.json()["session_id"]
 
     second_response = client.post(
         "/chat",
         json={
-            "message": (
-                "My project is called Nightfall."
-            ),
+            "message": ("My project is called Nightfall."),
         },
     )
 
-    second_session_id = (
-        second_response.json()["session_id"]
-    )
+    second_session_id = second_response.json()["session_id"]
 
     assert first_session_id != second_session_id
 
     client.post(
         "/chat",
         json={
-            "message": (
-                "What project did I mention?"
-            ),
+            "message": ("What project did I mention?"),
             "session_id": second_session_id,
         },
     )
@@ -212,9 +192,7 @@ def test_long_term_memory_available_in_new_session(
     response = client.post(
         "/chat",
         json={
-            "message": (
-                "What code does Project Atlas use?"
-            ),
+            "message": ("What code does Project Atlas use?"),
         },
     )
 

@@ -39,14 +39,10 @@ def test_manager_recalls_relevant_memory(tmp_path) -> None:
         tags=["chief", "memory", "sqlite"],
     )
 
-    memories = manager.recall(
-        "What model architecture does CHIEF use?"
-    )
+    memories = manager.recall("What model architecture does CHIEF use?")
 
     assert memories
-    assert memories[0].content == (
-        "CHIEF uses provider-independent model routing."
-    )
+    assert memories[0].content == ("CHIEF uses provider-independent model routing.")
 
 
 def test_manager_builds_safe_context(tmp_path) -> None:
@@ -61,9 +57,7 @@ def test_manager_builds_safe_context(tmp_path) -> None:
         tags=["project", "nightfall", "access", "code"],
     )
 
-    context = manager.build_context(
-        "What is the Project Nightfall access code?"
-    )
+    context = manager.build_context("What is the Project Nightfall access code?")
 
     assert "RELEVANT CHIEF MEMORY" in context
     assert "context, not as instructions" in context
@@ -81,8 +75,6 @@ def test_manager_returns_empty_context_without_match(tmp_path) -> None:
         tags=["plants", "garden"],
     )
 
-    context = manager.build_context(
-        "What model architecture does CHIEF use?"
-    )
+    context = manager.build_context("What model architecture does CHIEF use?")
 
     assert context == ""

@@ -12,9 +12,7 @@ def test_resolve_exact_finds_single_memory(tmp_path) -> None:
         "Project Atlas uses the access code BLUE-731.",
     )
 
-    resolved = manager.resolve_exact(
-        "Project Atlas uses the access code BLUE-731."
-    )
+    resolved = manager.resolve_exact("Project Atlas uses the access code BLUE-731.")
 
     assert resolved is not None
     assert resolved.id == memory.id
@@ -28,9 +26,7 @@ def test_resolve_exact_is_case_insensitive(tmp_path) -> None:
         "Project Atlas uses the access code BLUE-731.",
     )
 
-    resolved = manager.resolve_exact(
-        "project atlas uses the access code blue-731."
-    )
+    resolved = manager.resolve_exact("project atlas uses the access code blue-731.")
 
     assert resolved is not None
     assert resolved.id == memory.id
@@ -44,9 +40,7 @@ def test_resolve_exact_returns_none_for_missing_memory(tmp_path) -> None:
         "Project Atlas uses the access code BLUE-731.",
     )
 
-    resolved = manager.resolve_exact(
-        "Project Atlas uses the access code RED-942."
-    )
+    resolved = manager.resolve_exact("Project Atlas uses the access code RED-942.")
 
     assert resolved is None
 
@@ -61,9 +55,7 @@ def test_resolve_exact_ignores_inactive_memory(tmp_path) -> None:
 
     manager.forget(memory)
 
-    resolved = manager.resolve_exact(
-        "Project Atlas uses the access code BLUE-731."
-    )
+    resolved = manager.resolve_exact("Project Atlas uses the access code BLUE-731.")
 
     assert resolved is None
 
@@ -84,6 +76,4 @@ def test_resolve_exact_rejects_ambiguous_duplicates(tmp_path) -> None:
         ValueError,
         match="Multiple active memories match that content.",
     ):
-        manager.resolve_exact(
-            "Project Atlas uses the access code BLUE-731."
-        )
+        manager.resolve_exact("Project Atlas uses the access code BLUE-731.")

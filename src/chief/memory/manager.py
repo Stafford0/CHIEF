@@ -56,14 +56,10 @@ class MemoryManager:
         stored_memory = self.store.get(old_memory.id)
 
         if stored_memory is None:
-            raise ValueError(
-                "Cannot correct a memory that does not exist."
-            )
+            raise ValueError("Cannot correct a memory that does not exist.")
 
         if not stored_memory.active:
-            raise ValueError(
-                "Cannot correct an inactive memory."
-            )
+            raise ValueError("Cannot correct an inactive memory.")
 
         old_memory = stored_memory
 
@@ -76,11 +72,7 @@ class MemoryManager:
                 description=source_description,
             ),
             confidence=confidence,
-            importance=(
-                old_memory.importance
-                if importance is None
-                else importance
-            ),
+            importance=(old_memory.importance if importance is None else importance),
             tags=old_memory.tags if tags is None else tags,
             supersedes=old_memory.id,
         )
@@ -116,9 +108,7 @@ class MemoryManager:
             return None
 
         if len(matches) > 1:
-            raise ValueError(
-                "Multiple active memories match that content."
-            )
+            raise ValueError("Multiple active memories match that content.")
 
         return matches[0]
 

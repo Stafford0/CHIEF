@@ -48,9 +48,7 @@ def test_retrieval_finds_relevant_memory(tmp_path) -> None:
 
     retriever = MemoryRetriever(store)
 
-    results = retriever.retrieve(
-        "What model architecture does CHIEF use?"
-    )
+    results = retriever.retrieve("What model architecture does CHIEF use?")
 
     assert results
     assert results[0].memory.id == model_memory.id
@@ -88,9 +86,7 @@ def test_retrieval_ignores_irrelevant_memory(tmp_path) -> None:
 
     retriever = MemoryRetriever(store)
 
-    results = retriever.retrieve(
-        "What model architecture does CHIEF use?"
-    )
+    results = retriever.retrieve("What model architecture does CHIEF use?")
 
     assert results == []
 
@@ -109,8 +105,6 @@ def test_retrieval_ignores_inactive_memory(tmp_path) -> None:
 
     retriever = MemoryRetriever(store)
 
-    results = retriever.retrieve(
-        "What model architecture does CHIEF use?"
-    )
+    results = retriever.retrieve("What model architecture does CHIEF use?")
 
     assert results == []

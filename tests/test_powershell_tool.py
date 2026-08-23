@@ -58,9 +58,7 @@ def test_read_tool_rejects_non_allowlisted_command(tmp_path) -> None:
 def test_read_tool_rejects_shell_operators(tmp_path) -> None:
     tool = PowerShellReadTool([tmp_path], executable="pwsh")
 
-    result = tool.run(
-        {"command": "Get-Process", "args": [";", "Remove-Item"]}
-    )
+    result = tool.run({"command": "Get-Process", "args": [";", "Remove-Item"]})
 
     assert result.success is False
     assert "operators" in (result.error or "")

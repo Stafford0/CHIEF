@@ -17,10 +17,7 @@ class SystemStatusTool(Tool):
     def definition(self) -> ToolDefinition:
         return ToolDefinition(
             name="system_status",
-            description=(
-                "Report CHIEF runtime status and basic "
-                "environment information."
-            ),
+            description=("Report CHIEF runtime status and basic environment information."),
             risk=ToolRisk.SAFE,
             requires_approval=False,
         )
@@ -32,9 +29,7 @@ class SystemStatusTool(Tool):
         super().validate(arguments)
 
         if arguments:
-            raise ValueError(
-                "system_status does not accept arguments."
-            )
+            raise ValueError("system_status does not accept arguments.")
 
     def execute(
         self,

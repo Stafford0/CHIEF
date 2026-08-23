@@ -28,9 +28,7 @@ def test_correct_supersedes_old_memory(tmp_path) -> None:
     assert stored_new.active is True
 
     assert stored_new.supersedes == old_memory.id
-    assert stored_new.content == (
-        "Project Atlas uses the access code RED-942."
-    )
+    assert stored_new.content == ("Project Atlas uses the access code RED-942.")
 
 
 def test_recall_uses_corrected_memory(tmp_path) -> None:
@@ -48,20 +46,12 @@ def test_recall_uses_corrected_memory(tmp_path) -> None:
         "Project Atlas uses the access code RED-942.",
     )
 
-    memories = manager.recall(
-        "What is the access code for Project Atlas?"
-    )
+    memories = manager.recall("What is the access code for Project Atlas?")
 
     assert memories
-    assert any(
-        "RED-942" in memory.content
-        for memory in memories
-    )
+    assert any("RED-942" in memory.content for memory in memories)
 
-    assert all(
-        "BLUE-731" not in memory.content
-        for memory in memories
-    )
+    assert all("BLUE-731" not in memory.content for memory in memories)
 
 
 def test_forget_removes_memory_from_recall(tmp_path) -> None:
@@ -78,9 +68,7 @@ def test_forget_removes_memory_from_recall(tmp_path) -> None:
 
     assert result is True
 
-    memories = manager.recall(
-        "What is the access code for Project Atlas?"
-    )
+    memories = manager.recall("What is the access code for Project Atlas?")
 
     assert memories == []
 
@@ -120,6 +108,4 @@ def test_cannot_correct_inactive_memory(tmp_path) -> None:
     except ValueError as exc:
         assert str(exc) == "Cannot correct an inactive memory."
     else:
-        raise AssertionError(
-            "Expected correction of inactive memory to fail."
-        )
+        raise AssertionError("Expected correction of inactive memory to fail.")

@@ -9,7 +9,6 @@ from typing import Any
 
 from chief.tools.base import Tool, ToolDefinition, ToolResult, ToolRisk
 
-
 _UNSAFE_TOKEN = re.compile(r"[;&|<>`\r\n]")
 
 

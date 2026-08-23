@@ -1,5 +1,6 @@
-from fastapi.testclient import TestClient
 from uuid import UUID
+
+from fastapi.testclient import TestClient
 
 from chief.core import app as app_module
 from chief.core.session_store import SessionStore
@@ -55,9 +56,7 @@ def make_client(tmp_path, monkeypatch):
     provider = FakeModelProvider()
     registry = ToolRegistry()
     safe_tool = RecordingTool("powershell_read", ToolRisk.SAFE, "safe output")
-    sensitive_tool = RecordingTool(
-        "powershell_command", ToolRisk.SENSITIVE, "17 passed"
-    )
+    sensitive_tool = RecordingTool("powershell_command", ToolRisk.SENSITIVE, "17 passed")
     registry.register(safe_tool)
     registry.register(sensitive_tool)
     monkeypatch.setattr(app_module, "memory_store", store)
@@ -99,9 +98,7 @@ def test_approval_follow_up_executes_pending_call(tmp_path, monkeypatch) -> None
     client, sessions, _, _, sensitive_tool = make_client(tmp_path, monkeypatch)
     first = client.post("/chat", json={"message": "run the tests"}).json()
 
-    response = client.post(
-        "/chat", json={"message": "approve", "session_id": first["session_id"]}
-    )
+    response = client.post("/chat", json={"message": "approve", "session_id": first["session_id"]})
 
     assert response.json()["response"] == "17 passed"
     assert response.json()["status"] == "completed"
@@ -114,9 +111,7 @@ def test_rejection_cancels_without_execution(tmp_path, monkeypatch) -> None:
     client, sessions, _, _, sensitive_tool = make_client(tmp_path, monkeypatch)
     first = client.post("/chat", json={"message": "run tests"}).json()
 
-    response = client.post(
-        "/chat", json={"message": "cancel", "session_id": first["session_id"]}
-    )
+    response = client.post("/chat", json={"message": "cancel", "session_id": first["session_id"]})
 
     assert response.json()["response"].startswith("Cancelled")
     assert response.json()["status"] == "cancelled"
@@ -159,9 +154,7 @@ def test_root_serves_chat_interface(tmp_path, monkeypatch) -> None:
     assert "contentType.includes('application/json')" in response.text
 
 
-def test_model_unavailable_returns_structured_chat_response(
-    tmp_path, monkeypatch
-) -> None:
+def test_model_unavailable_returns_structured_chat_response(tmp_path, monkeypatch) -> None:
     client, _, _, _, _ = make_client(tmp_path, monkeypatch)
     monkeypatch.setattr(app_module, "model_provider", UnavailableModelProvider())
 

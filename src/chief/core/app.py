@@ -1,12 +1,16 @@
+import logging
+import time
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
+from starlette.requests import Request
 
+from chief.core.config import Settings
 from chief.core.identity import SYSTEM_IDENTITY
 from chief.core.session_store import SessionStore
 from chief.core.tool_planner import DeterministicToolPlanner, PendingAction
@@ -19,9 +23,10 @@ from chief.memory.commands import (
 from chief.memory.manager import MemoryManager
 from chief.memory.sqlite import SQLiteMemoryStore
 from chief.models.ollama import OllamaProvider
+from chief.models.router import ModelRouter
 from chief.tools.registry import ToolRegistry, create_standard_registry
 
-
+settings = Settings.from_env()
 app = FastAPI(
     title="CHIEF",
     description="Cognitive Hub for Intelligence, Execution & Foresight",
@@ -30,17 +35,61 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://127.0.0.1:5173",
-        "http://localhost:5173",
-    ],
-    allow_origin_regex=r"http://(?:192\.168|10\.\d|172\.(?:1[6-9]|2\d|3[01]))\.\d+\.\d+:5173",
+    allow_origins=list(settings.cors_origins),
+    allow_origin_regex=(
+        r"http://(?:192\.168|10\.\d|172\.(?:1[6-9]|2\d|3[01]))\.\d+\.\d+:5173"
+        if settings.allow_private_lan_ui
+        else None
+    ),
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
-model_provider = OllamaProvider(model="qwen3:4b")
+logger = logging.getLogger("chief.api")
+
+
+@app.middleware("http")
+async def operational_headers(request: Request, call_next):
+    """Attach correlation, timing, and browser hardening headers."""
+    request_id = request.headers.get("x-request-id", str(uuid4()))[:128]
+    started = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = (time.perf_counter() - started) * 1000
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Cache-Control"] = "no-store"
+    logger.info(
+        "request_complete",
+        extra={
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status": response.status_code,
+            "duration_ms": round(duration_ms, 3),
+        },
+    )
+    return response
+
+
+model_provider = OllamaProvider(
+    model=settings.ollama_model,
+    base_url=settings.ollama_url,
+    timeout=settings.model_timeout_seconds,
+    max_response_bytes=settings.max_model_response_bytes,
+)
+model_router = ModelRouter([model_provider])
+
+
+def generate_model(prompt: str, system_prompt: str):
+    """Route providers while preserving runtime/test provider replacement."""
+    router = model_router
+    if model_provider not in router.providers:
+        router = ModelRouter([model_provider])
+    return router.generate(prompt, system_prompt)
+
 
 memory_store = SQLiteMemoryStore()
 memory_manager = MemoryManager(memory_store)
@@ -96,6 +145,12 @@ def health() -> dict[str, str]:
         "system": "CHIEF",
         "version": "0.0.1",
     }
+
+
+@app.get("/ready")
+def readiness() -> dict[str, str]:
+    """Report whether required local components can accept work."""
+    return {"status": "ready", "memory": "online", "tool_registry": "online"}
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -213,10 +268,14 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
 
     pending_action = tool_planner.pending_action(chat_request.message)
     if session.pending_tool_call is not None and pending_action is not None:
-        pending_call = session.pending_tool_call
-        session.pending_tool_call = None
+        pending = session.take_pending_tool()
+        assert pending is not None
+        pending_call = pending.call
 
-        if pending_action == PendingAction.REJECT:
+        if pending.expired():
+            response_text = f"Approval expired: I did not {pending_call.description}."
+            response_status = "expired"
+        elif pending_action == PendingAction.REJECT:
             response_text = f"Cancelled: I did not {pending_call.description}."
             response_status = "cancelled"
         else:
@@ -356,10 +415,11 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
         result = tool_registry.execute(planned_call.tool_name, planned_call.arguments)
 
         if result.content == "Tool execution requires approval.":
-            session.pending_tool_call = planned_call
+            proposal = session.propose_tool(planned_call)
             response_text = (
                 f"Approval required to {planned_call.description}. "
-                "Reply 'approve' to run it or 'cancel' to discard it."
+                f"Review code {proposal.digest[:12]}. Reply 'approve' within five minutes "
+                "to run this exact action or 'cancel' to discard it."
             )
             response_status = "pending_approval"
         else:
@@ -376,9 +436,7 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
             model="deterministic",
             session_id=session.id,
             status=response_status,
-            pending_action=(
-                "approve_or_cancel" if response_status == "pending_approval" else None
-            ),
+            pending_action=("approve_or_cancel" if response_status == "pending_approval" else None),
             tool_description=planned_call.description,
         )
 
@@ -392,7 +450,7 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
     system_prompt = "\n\n".join(context_parts)
 
     try:
-        result = model_provider.generate(
+        result = generate_model(
             prompt=chat_request.message,
             system_prompt=system_prompt,
         )

@@ -73,4 +73,8 @@ Do not add autonomous write capabilities before permission, approval, verificati
 
 ## Status
 
-Foundation in progress. Functional AI code has intentionally not been added yet.
+CHIEF ZERO is functional and pre-alpha. It currently includes a FastAPI core,
+local Ollama inference, explicit SQLite memory, guarded filesystem/PowerShell
+tools, approval-gated sensitive execution, an audit stream, session context,
+live host telemetry, and a React command-center UI. It is not yet suitable for
+unattended or internet-exposed operation.

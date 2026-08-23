@@ -34,13 +34,11 @@ class MemoryCommandParser:
     )
 
     _CORRECT_PATTERN = (
-        r'^\s*(?:chief[\s,:-]+)?correct\s+'
+        r"^\s*(?:chief[\s,:-]+)?correct\s+"
         r'"([^"]+)"\s+to\s+"([^"]+)"\s*$'
     )
 
-    _FORGET_PATTERN = (
-        r'^\s*(?:chief[\s,:-]+)?forget\s+"([^"]+)"\s*$'
-    )
+    _FORGET_PATTERN = r'^\s*(?:chief[\s,:-]+)?forget\s+"([^"]+)"\s*$'
 
     def parse(
         self,

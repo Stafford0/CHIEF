@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
-import re
-from typing import Any
+from typing import Any, ClassVar
 
 
 @dataclass(frozen=True)
@@ -24,7 +24,7 @@ class PendingAction(str, Enum):
 class DeterministicToolPlanner:
     """Recognize a narrow set of explicit intents without involving the LLM."""
 
-    _INTENTS = {
+    _INTENTS: ClassVar[dict[str, PlannedToolCall]] = {
         "run the tests": PlannedToolCall(
             intent="run_tests",
             tool_name="powershell_command",
@@ -75,7 +75,9 @@ class DeterministicToolPlanner:
         ),
     }
     _APPROVALS = frozenset({"approve", "approved", "yes approve", "yes, approve", "go ahead"})
-    _REJECTIONS = frozenset({"reject", "cancel", "cancel it", "do not run it", "don't run it", "no"})
+    _REJECTIONS = frozenset(
+        {"reject", "cancel", "cancel it", "do not run it", "don't run it", "no"}
+    )
 
     @staticmethod
     def _normalize(message: str) -> str:

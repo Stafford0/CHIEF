@@ -49,9 +49,7 @@ def test_system_status_reports_runtime() -> None:
 
     assert result.success is True
     assert result.data["os"] == platform.system()
-    assert result.data["python_version"] == (
-        platform.python_version()
-    )
+    assert result.data["python_version"] == (platform.python_version())
 
     assert "CHIEF runtime is online." in result.content
 
@@ -68,6 +66,4 @@ def test_system_status_rejects_arguments() -> None:
     )
 
     assert result.success is False
-    assert result.error == (
-        "system_status does not accept arguments."
-    )
+    assert result.error == ("system_status does not accept arguments.")

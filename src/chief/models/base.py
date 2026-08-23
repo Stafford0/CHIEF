@@ -7,6 +7,7 @@ class ModelResponse:
     content: str
     provider: str
     model: str
+    latency_ms: float | None = None
 
 
 class ModelProvider(ABC):
@@ -17,10 +18,10 @@ class ModelProvider(ABC):
     def name(self) -> str:
         """Return the provider's unique name."""
 
-@abstractmethod
-def generate(
-    self,
-    prompt: str,
-    system_prompt: str | None = None,
-) -> ModelResponse:
-    """Generate a response using an optional system prompt."""
+    @abstractmethod
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+    ) -> ModelResponse:
+        """Generate a response using an optional system prompt."""

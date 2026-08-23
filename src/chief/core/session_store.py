@@ -37,9 +37,7 @@ class SessionStore:
         session = self.get(session_id)
 
         if session is None:
-            raise KeyError(
-                f"Conversation session {session_id} does not exist."
-            )
+            raise KeyError(f"Conversation session {session_id} does not exist.")
 
         return session
 
@@ -70,10 +68,12 @@ class SessionStore:
                 continue
             pending.append(
                 {
-                    "name": call.description,
-                    "tool": call.tool_name,
+                    "name": call.call.description,
+                    "tool": call.call.tool_name,
                     "status": "awaiting approval",
                     "session_id": str(session.id),
+                    "approval_digest": call.digest[:12],
+                    "expires_at": call.expires_at.isoformat(),
                 }
             )
         return pending
@@ -86,9 +86,7 @@ class SessionStore:
                 "session_id": str(session.id),
                 "messages": len(session.messages),
                 "status": (
-                    "awaiting approval"
-                    if session.pending_tool_call is not None
-                    else "active"
+                    "awaiting approval" if session.pending_tool_call is not None else "active"
                 ),
                 "updated_at": session.updated_at.isoformat(),
             }

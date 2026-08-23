@@ -2,7 +2,6 @@ from fastapi.testclient import TestClient
 
 from chief.core.app import app
 
-
 client = TestClient(app)
 
 

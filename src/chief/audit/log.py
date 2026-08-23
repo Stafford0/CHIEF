@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from threading import Lock
 from typing import Any
 
 
@@ -11,9 +12,7 @@ class AuditEvent:
     approved: bool
     decision: str
     success: bool
-    timestamp: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -24,14 +23,20 @@ class AuditLog:
     Persistence can be swapped in later without changing the registry API.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, max_events: int = 10_000) -> None:
         self._events: list[AuditEvent] = []
+        self._max_events = max_events
+        self._lock = Lock()
 
     def record(self, event: AuditEvent) -> None:
-        self._events.append(event)
+        with self._lock:
+            self._events.append(event)
+            if len(self._events) > self._max_events:
+                del self._events[: len(self._events) - self._max_events]
 
     def events(self) -> list[AuditEvent]:
-        return list(self._events)
+        with self._lock:
+            return list(self._events)
 
     def latest(self) -> AuditEvent | None:
         if not self._events:

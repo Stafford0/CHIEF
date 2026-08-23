@@ -1,3 +1,7 @@
+import hashlib
+import json
+import time
+
 from chief.audit.log import AuditEvent, AuditLog
 from chief.guard.policy import PolicyDecision, ToolPolicy
 from chief.tools.base import Tool, ToolDefinition, ToolResult
@@ -22,14 +26,10 @@ class ToolRegistry:
         name = tool.definition.name.strip()
 
         if not name:
-            raise ValueError(
-                "Tool name cannot be empty."
-            )
+            raise ValueError("Tool name cannot be empty.")
 
         if name in self._tools:
-            raise ValueError(
-                f"Tool '{name}' is already registered."
-            )
+            raise ValueError(f"Tool '{name}' is already registered.")
 
         self._tools[name] = tool
 
@@ -50,10 +50,7 @@ class ToolRegistry:
     def definitions(self) -> list[ToolDefinition]:
         """Return definitions for all registered tools."""
 
-        return [
-            tool.definition
-            for tool in self._tools.values()
-        ]
+        return [tool.definition for tool in self._tools.values()]
 
     def names(self) -> list[str]:
         """Return names of all registered tools."""
@@ -68,6 +65,10 @@ class ToolRegistry:
         approved: bool = False,
     ) -> ToolResult:
         """Evaluate policy, execute a registered tool, and audit the attempt."""
+        started = time.perf_counter()
+        argument_digest = hashlib.sha256(
+            json.dumps(arguments, sort_keys=True, default=str).encode()
+        ).hexdigest()
 
         tool = self.get(name)
 
@@ -75,9 +76,7 @@ class ToolRegistry:
             result = ToolResult(
                 success=False,
                 content="Tool execution refused.",
-                error=(
-                    f"Tool '{name}' is not registered."
-                ),
+                error=(f"Tool '{name}' is not registered."),
             )
             self.audit_log.record(
                 AuditEvent(
@@ -137,6 +136,10 @@ class ToolRegistry:
                 decision=policy_result.decision.value,
                 success=result.success,
                 error=result.error,
+                metadata={
+                    "argument_digest": argument_digest,
+                    "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+                },
             )
         )
         return result

@@ -19,11 +19,7 @@ class MemoryRetriever:
 
     @staticmethod
     def _tokens(text: str) -> set[str]:
-        return {
-            token
-            for token in re.findall(r"[a-z0-9]+", text.lower())
-            if len(token) > 2
-        }
+        return {token for token in re.findall(r"[a-z0-9]+", text.lower()) if len(token) > 2}
 
     def _score(self, query: str, memory: MemoryRecord) -> float:
         query_tokens = self._tokens(query)
@@ -55,6 +51,12 @@ class MemoryRetriever:
         limit: int = 5,
         minimum_score: float = 0.15,
     ) -> list[RetrievedMemory]:
+        if limit <= 0:
+            return []
+        if limit > 50:
+            raise ValueError("Memory retrieval limit cannot exceed 50.")
+        if not 0 <= minimum_score <= 1.3:
+            raise ValueError("Memory minimum score is out of range.")
         memories = self.store.list_active(limit=1000)
 
         scored = [
@@ -65,14 +67,10 @@ class MemoryRetriever:
             for memory in memories
         ]
 
-        relevant = [
-            result
-            for result in scored
-            if result.score >= minimum_score
-        ]
+        relevant = [result for result in scored if result.score >= minimum_score]
 
         relevant.sort(
-            key=lambda result: result.score,
+            key=lambda result: (result.score, result.memory.updated_at),
             reverse=True,
         )
 

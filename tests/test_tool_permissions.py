@@ -58,9 +58,7 @@ def test_controlled_tool_requires_approval_by_default() -> None:
 
 def test_controlled_tool_can_be_enabled_by_policy() -> None:
     tool = ControlledTool()
-    registry = ToolRegistry(
-        policy=ToolPolicy(allow_controlled=True)
-    )
+    registry = ToolRegistry(policy=ToolPolicy(allow_controlled=True))
     registry.register(tool)
 
     result = registry.execute("controlled_test", {})

@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useMemo, useState } from "react";
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity, AlertTriangle, Bot, BrainCircuit, ChevronRight, Cpu, Database,
@@ -7,6 +7,7 @@ import {
   Wrench, Zap, Crosshair, Layers3, ScanLine, FolderGit2, Gauge, Router,
 } from "lucide-react";
 import "./styles.css";
+import { requestJson } from "./api";
 
 type Health = { status: string; system: string; version: string };
 type SystemInfo = { name: string; full_name: string; version: string; milestone: string; environment: string };
@@ -54,25 +55,30 @@ function App() {
   const [clock, setClock] = useState(new Date());
   const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: "CHIEF command interface online. Awaiting directive." }]);
   const [input, setInput] = useState("");
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(() => sessionStorage.getItem("chief.session"));
   const [busy, setBusy] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  const chatAbort = useRef<AbortController | null>(null);
 
   async function loadTelemetry() {
     try {
-      const [healthRes, systemRes, dashboardRes] = await Promise.all([
-        fetch(`${API_BASE}/health`), fetch(`${API_BASE}/system`), fetch(`${API_BASE}/dashboard`),
+      const [nextHealth, nextSystem, nextDashboard] = await Promise.all([
+        requestJson<Health>(`${API_BASE}/health`, {}, 5000), requestJson<SystemInfo>(`${API_BASE}/system`, {}, 5000), requestJson<Dashboard>(`${API_BASE}/dashboard`, {}, 8000),
       ]);
-      if (!healthRes.ok || !systemRes.ok || !dashboardRes.ok) throw new Error("CHIEF telemetry unavailable");
-      setHealth(await healthRes.json()); setSystem(await systemRes.json()); setDashboard(await dashboardRes.json()); setApiError(null);
+      setHealth(nextHealth); setSystem(nextSystem); setDashboard(nextDashboard); setApiError(null);
     } catch (error) { setApiError(error instanceof Error ? error.message : "Connection failed"); }
   }
 
   useEffect(() => {
     loadTelemetry();
-    const telemetryTimer = window.setInterval(loadTelemetry, 4000);
+    const refresh = () => { if (!document.hidden) void loadTelemetry(); };
+    const telemetryTimer = window.setInterval(refresh, 8000);
     const clockTimer = window.setInterval(() => setClock(new Date()), 1000);
-    return () => { clearInterval(telemetryTimer); clearInterval(clockTimer); };
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("online", refresh);
+    const offline = () => setApiError("Network connection offline");
+    window.addEventListener("offline", offline);
+    return () => { clearInterval(telemetryTimer); clearInterval(clockTimer); document.removeEventListener("visibilitychange", refresh); window.removeEventListener("online", refresh); window.removeEventListener("offline", offline); chatAbort.current?.abort(); };
   }, []);
 
   const online = health?.status === "online" && dashboard?.runtime.api_status === "online";
@@ -108,14 +114,13 @@ function App() {
     if (!message || busy) return;
     setMessages((m) => [...m, { role: "user", content: message }]); setInput(""); setBusy(true);
     try {
-      const res = await fetch(`${API_BASE}/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, session_id: sessionId }) });
-      if (!res.ok) throw new Error(`Chat request failed (${res.status})`);
-      const data: ChatResponse = await res.json();
-      setSessionId(data.session_id); setMessages((m) => [...m, { role: "assistant", content: data.response }]); setApiError(null); loadTelemetry();
+      chatAbort.current = new AbortController();
+      const data = await requestJson<ChatResponse>(`${API_BASE}/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, session_id: sessionId }), signal: chatAbort.current.signal }, 130000);
+      setSessionId(data.session_id); sessionStorage.setItem("chief.session", data.session_id); setMessages((m) => [...m, { role: "assistant", content: data.response }]); setApiError(null); void loadTelemetry();
     } catch (error) {
       setApiError(error instanceof Error ? error.message : "Chat failed");
       setMessages((m) => [...m, { role: "assistant", content: "Unable to reach CHIEF core. Check the API connection." }]);
-    } finally { setBusy(false); }
+    } finally { setBusy(false); chatAbort.current = null; }
   }
 
   return <main className="c2-shell">

@@ -1,4 +1,5 @@
 import json
+import time
 from urllib import error, request
 
 from chief.models.base import ModelProvider, ModelResponse
@@ -12,10 +13,12 @@ class OllamaProvider(ModelProvider):
         model: str = "llama3.1:8b",
         base_url: str = "http://127.0.0.1:11434",
         timeout: float = 120.0,
+        max_response_bytes: int = 2_000_000,
     ) -> None:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.max_response_bytes = max_response_bytes
 
     @property
     def name(self) -> str:
@@ -26,6 +29,8 @@ class OllamaProvider(ModelProvider):
         prompt: str,
         system_prompt: str | None = None,
     ) -> ModelResponse:
+        if not prompt.strip():
+            raise ValueError("Model prompt cannot be empty.")
         payload_data = {
             "model": self.model,
             "prompt": prompt,
@@ -44,12 +49,16 @@ class OllamaProvider(ModelProvider):
             method="POST",
         )
 
+        started = time.perf_counter()
         try:
             with request.urlopen(
                 http_request,
                 timeout=self.timeout,
             ) as response:
-                data = json.loads(response.read().decode("utf-8"))
+                raw = response.read(self.max_response_bytes + 1)
+                if len(raw) > self.max_response_bytes:
+                    raise RuntimeError("Ollama response exceeded the configured size limit.")
+                data = json.loads(raw.decode("utf-8"))
 
         except TimeoutError as exc:
             raise RuntimeError(
@@ -57,30 +66,24 @@ class OllamaProvider(ModelProvider):
             ) from exc
 
         except error.HTTPError as exc:
-            raise RuntimeError(
-                f"Ollama returned HTTP error {exc.code}: {exc.reason}"
-            ) from exc
+            raise RuntimeError(f"Ollama returned HTTP error {exc.code}: {exc.reason}") from exc
 
         except error.URLError as exc:
             raise RuntimeError(
-                "CHIEF could not connect to Ollama. "
-                "Verify that the Ollama service is running."
+                "CHIEF could not connect to Ollama. Verify that the Ollama service is running."
             ) from exc
 
         except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                "Ollama returned a response CHIEF could not decode."
-            ) from exc
+            raise RuntimeError("Ollama returned a response CHIEF could not decode.") from exc
 
         content = data.get("response")
 
         if not isinstance(content, str):
-            raise RuntimeError(
-                "Ollama returned an invalid response."
-            )
+            raise TypeError("Ollama returned an invalid response.")
 
         return ModelResponse(
             content=content.strip(),
             provider=self.name,
             model=self.model,
+            latency_ms=(time.perf_counter() - started) * 1000,
         )
