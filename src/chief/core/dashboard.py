@@ -157,6 +157,49 @@ def _ollama_models(base_url: str = "http://127.0.0.1:11434") -> dict[str, Any]:
     return {"online": True, "models": models}
 
 
+def _projects(project_root: Path) -> list[dict[str, str]]:
+    """Discover nearby Git repositories without inventing project state."""
+
+    projects: list[dict[str, str]] = []
+    parent = project_root.parent
+    try:
+        candidates = sorted(
+            (path for path in parent.iterdir() if path.is_dir()),
+            key=lambda path: path.name.lower(),
+        )
+    except OSError:
+        candidates = []
+
+    for path in candidates:
+        if not (path / ".git").exists():
+            continue
+        branch = _run(["git", "-C", str(path), "branch", "--show-current"], timeout=1.5)
+        status = "active" if branch else "repository"
+        projects.append(
+            {
+                "name": path.name,
+                "status": status,
+                "path": str(path),
+                "branch": branch or "unknown",
+            }
+        )
+
+    if not projects:
+        projects.append(
+            {
+                "name": project_root.name,
+                "status": "active",
+                "path": str(project_root),
+                "branch": _run(
+                    ["git", "-C", str(project_root), "branch", "--show-current"],
+                    timeout=1.5,
+                )
+                or "unknown",
+            }
+        )
+    return projects
+
+
 def collect_dashboard_snapshot(project_root: Path) -> dict[str, Any]:
     memory = _memory()
     disk = _disk(project_root)
@@ -180,4 +223,5 @@ def collect_dashboard_snapshot(project_root: Path) -> dict[str, Any]:
         "gpu": gpu,
         "network": network,
         "ollama": ollama,
+        "projects": _projects(project_root),
     }
