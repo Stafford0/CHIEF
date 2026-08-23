@@ -3,6 +3,14 @@
    naturally from laptop widths up through ultrawide monitors instead of
    targeting one fixed canvas size. */
 
+/* Self-hosted condensed HUD typeface — CHIEF runs on a local network and
+   shouldn't depend on an external font CDN being reachable. */
+@font-face { font-family: "Barlow Condensed"; font-style: normal; font-weight: 400; font-display: swap; src: url("/fonts/barlow-condensed-400.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Condensed"; font-style: normal; font-weight: 500; font-display: swap; src: url("/fonts/barlow-condensed-500.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Condensed"; font-style: normal; font-weight: 600; font-display: swap; src: url("/fonts/barlow-condensed-600.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Condensed"; font-style: normal; font-weight: 700; font-display: swap; src: url("/fonts/barlow-condensed-700.woff2") format("woff2"); }
+@font-face { font-family: "Oswald"; font-style: normal; font-weight: 700; font-display: swap; src: url("/fonts/oswald-700.woff2") format("woff2"); }
+
 :root {
   --bg: #020607;
   --line: #1c3a3e;
@@ -32,7 +40,7 @@
   --sp-4: clamp(12px, 1vw, 19px);
   --sp-5: clamp(16px, 1.4vw, 26px);
 
-  font-family: "Bahnschrift Condensed", "Arial Narrow", "Roboto Condensed", Inter, ui-sans-serif, system-ui, sans-serif;
+  font-family: "Barlow Condensed", "Bahnschrift Condensed", "Arial Narrow", "Roboto Condensed", Inter, ui-sans-serif, system-ui, sans-serif;
   font-stretch: condensed;
   color: var(--text);
   background: var(--bg);
@@ -133,10 +141,11 @@ button { color: inherit; }
 .c2-brand h1 {
   margin: 0;
   color: #dbe1e2;
+  font-family: "Oswald", "Barlow Condensed", "Bahnschrift Condensed", sans-serif;
   font-size: var(--fs-3xl);
   line-height: .86;
   letter-spacing: .1em;
-  font-weight: 800;
+  font-weight: 700;
   text-shadow: 0 0 18px rgba(199, 224, 225, .09);
 }
 .c2-brand p {
@@ -182,6 +191,24 @@ button { color: inherit; }
 }
 .header-cell small { margin-top: var(--sp-1); display: block; color: #728a8d; font-size: var(--fs-xs); letter-spacing: .06em; }
 .teal { color: var(--cyan) !important; }
+.header-cell:first-child {
+  margin: clamp(8px, 1.2vh, 14px) var(--sp-3);
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(20,216,209,.05), transparent);
+  box-shadow: inset 3px 0 0 var(--cyan-dim);
+  padding: var(--sp-2) var(--sp-4);
+}
+.header-cell:first-child::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan);
+  vertical-align: middle;
+}
 
 /* ---------- workspace grid ---------- */
 .c2-workspace {
@@ -205,7 +232,7 @@ button { color: inherit; }
   padding-bottom: var(--sp-2);
   margin-bottom: var(--sp-3);
 }
-.panel-title span { font-size: var(--fs-md); color: #4fb2b5; letter-spacing: .14em; text-shadow: 0 0 8px rgba(20,216,209,.1); white-space: nowrap; }
+.panel-title span { font-size: var(--fs-md); font-weight: 600; color: #4fb2b5; letter-spacing: .14em; text-shadow: 0 0 8px rgba(20,216,209,.1); white-space: nowrap; }
 .panel-title i { flex: 1; height: 1px; background: linear-gradient(90deg, var(--cyan-dim), transparent); }
 
 /* ---------- COMMAND nav ---------- */
@@ -291,24 +318,34 @@ button { color: inherit; }
 }
 .map-city {
   position: absolute;
-  inset: -18%;
+  inset: 0;
   z-index: 0;
-  opacity: .5;
-  transform: rotate(-7deg) scale(1.06);
+  opacity: .8;
   background:
-    repeating-linear-gradient(15deg, transparent 0 34px, rgba(77,108,109,.13) 35px 38px, transparent 39px 73px),
-    repeating-linear-gradient(105deg, transparent 0 26px, rgba(73,108,110,.11) 27px 30px, transparent 31px 61px),
-    repeating-linear-gradient(38deg, transparent 0 98px, rgba(58,90,92,.12) 99px 105px, transparent 106px 166px);
-  filter: contrast(1.2);
+    /* scattered rooftop shading for photographic irregularity */
+    radial-gradient(60px 40px at 12% 18%, rgba(70,108,110,.22), transparent 70%),
+    radial-gradient(90px 55px at 82% 12%, rgba(60,98,100,.18), transparent 70%),
+    radial-gradient(70px 90px at 28% 66%, rgba(75,112,114,.2), transparent 70%),
+    radial-gradient(110px 60px at 68% 78%, rgba(58,94,96,.2), transparent 70%),
+    radial-gradient(50px 70px at 92% 52%, rgba(66,102,104,.16), transparent 70%),
+    radial-gradient(80px 50px at 45% 38%, rgba(72,110,112,.16), transparent 70%),
+    radial-gradient(65px 65px at 6% 82%, rgba(60,96,98,.18), transparent 70%),
+    /* major arterial streets */
+    repeating-linear-gradient(0deg, transparent 0 168px, rgba(110,158,160,.16) 168px 172px, transparent 172px 340px),
+    repeating-linear-gradient(90deg, transparent 0 214px, rgba(110,158,160,.14) 214px 218px, transparent 218px 420px),
+    /* city block grid */
+    repeating-linear-gradient(0deg, rgba(58,96,98,.12) 0 31px, transparent 31px 56px),
+    repeating-linear-gradient(90deg, rgba(50,88,90,.1) 0 42px, transparent 42px 74px);
+  filter: contrast(1.22) brightness(.92);
 }
 .map-grid {
   position: absolute;
   inset: 0;
   z-index: 0;
-  opacity: .7;
+  opacity: .38;
   background-image:
-    linear-gradient(rgba(48,99,102,.12) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(48,99,102,.12) 1px, transparent 1px);
+    linear-gradient(rgba(48,99,102,.14) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(48,99,102,.14) 1px, transparent 1px);
   background-size: 38px 38px;
 }
 .map-scan {
