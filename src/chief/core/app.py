@@ -122,11 +122,13 @@ def dashboard_info() -> dict[str, Any]:
 
     snapshot = collect_dashboard_snapshot(PROJECT_ROOT)
     definitions = list(tool_registry.definitions())
+    audit_events = tool_registry.audit_log.events()[-8:]
     snapshot["runtime"] = {
         "api_status": "online",
         "active_model": model_provider.model,
         "model_provider": model_provider.name,
         "sessions": session_store.count(),
+        "session_details": session_store.summaries(),
         "tools": [
             {
                 "name": definition.name,
@@ -150,17 +152,21 @@ def dashboard_info() -> dict[str, Any]:
                 "kind": "model service",
             },
         ],
-        "queued_tasks": [],
-        "recent_executions": [],
-        "projects": [
+        "queued_tasks": session_store.pending_tool_calls(),
+        "recent_executions": [
             {
-                "name": "CHIEF",
-                "status": "active",
-                "path": str(PROJECT_ROOT),
+                "name": event.tool_name,
+                "status": "success" if event.success else "failed",
+                "decision": event.decision,
+                "approved": event.approved,
+                "timestamp": event.timestamp.isoformat(),
+                "error": event.error,
             }
+            for event in reversed(audit_events)
         ],
+        "projects": snapshot.get("projects", []),
         "objectives": [
-            {"name": "Command center parity", "status": "active"},
+            {"name": "CHIEF command center reference parity", "status": "active"},
             {"name": "Reliable local AI runtime", "status": "active"},
             {"name": "Phone-accessible control", "status": "active"},
         ],
