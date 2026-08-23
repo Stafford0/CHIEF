@@ -174,8 +174,9 @@ def create_standard_registry(
     policy: ToolPolicy | None = None,
     audit_log: AuditLog | None = None,
 ) -> ToolRegistry:
-    """Build CHIEF's standard registry, including the approval-only shell tool."""
+    """Build CHIEF's standard registry, including guarded execution tools."""
 
+    from chief.tools.powershell import PowerShellCommandTool, PowerShellReadTool
     from chief.tools.shell import ShellCommandTool
 
     registry = create_read_only_registry(
@@ -183,5 +184,7 @@ def create_standard_registry(
         policy=policy,
         audit_log=audit_log,
     )
+    registry.register(PowerShellReadTool(allowed_roots))
+    registry.register(PowerShellCommandTool(allowed_roots))
     registry.register(ShellCommandTool(allowed_roots))
     return registry
