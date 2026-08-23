@@ -1,272 +1,33 @@
-import React, { FormEvent, useEffect, useMemo, useState } from "react";
+import React, { FormEvent, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  Activity,
-  AlertTriangle,
-  Bot,
-  BrainCircuit,
-  ChevronRight,
-  Database,
-  Gauge,
-  MessageSquare,
-  Radio,
-  Send,
-  Settings,
-  ShieldCheck,
-  TerminalSquare,
-  Wrench,
-} from "lucide-react";
+import { Activity, AlertTriangle, Bot, Box, Crosshair, Database, Gauge, Map, Menu, MessageSquare, Radio, Send, Settings, Shield, Target, TerminalSquare, Users, Wrench, Zap } from "lucide-react";
 import "./styles.css";
 
-type Health = { status: string; system: string; version: string };
-type SystemInfo = {
-  name: string;
-  full_name: string;
-  version: string;
-  milestone: string;
-  environment: string;
-};
-type ChatMessage = { role: "user" | "assistant"; content: string };
-type ChatResponse = { response: string; provider: string; model: string; session_id: string };
+type Health={status:string;version:string}; type SystemInfo={milestone:string;environment:string};
+type Message={role:"user"|"assistant";content:string};
+const API=import.meta.env.VITE_CHIEF_API_URL||`http://${window.location.hostname}:8000`;
+const nav=[[Activity,"Status"],[MessageSquare,"Intel Feed"],[Map,"Maps"],[Users,"Squads"],[Target,"Assets"],[Crosshair,"Missions"],[Shield,"Permissions"],[Settings,"System"]] as const;
+const alerts=["HVT sighting update","Enemy patrol detected","SAM site active","Communications jammed","New intel available"];
 
-const API_BASE =
-  import.meta.env.VITE_CHIEF_API_URL || `http://${window.location.hostname}:8000`;
-
-const navItems = [
-  [Activity, "Overview"],
-  [MessageSquare, "Chat"],
-  [BrainCircuit, "Memory"],
-  [Wrench, "Tools"],
-  [Database, "Projects"],
-  [Radio, "Sessions"],
-  [ShieldCheck, "Permissions"],
-  [Settings, "Settings"],
-] as const;
-
-function App() {
-  const [health, setHealth] = useState<Health | null>(null);
-  const [system, setSystem] = useState<SystemInfo | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: "assistant", content: "CHIEF command interface online. Awaiting directive." },
-  ]);
-  const [input, setInput] = useState("");
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [apiError, setApiError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const [healthRes, systemRes] = await Promise.all([
-          fetch(`${API_BASE}/health`),
-          fetch(`${API_BASE}/system`),
-        ]);
-        if (!healthRes.ok || !systemRes.ok) throw new Error("CHIEF API unavailable");
-        setHealth(await healthRes.json());
-        setSystem(await systemRes.json());
-        setApiError(null);
-      } catch (error) {
-        setApiError(error instanceof Error ? error.message : "Connection failed");
-      }
-    };
-    load();
-    const timer = window.setInterval(load, 10000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  const online = health?.status === "online";
-  const modelLabel = useMemo(() => {
-    const last = [...messages].reverse().find((m) => m.role === "assistant");
-    return last ? "LOCAL AI READY" : "STANDBY";
-  }, [messages]);
-
-  async function sendMessage(event: FormEvent) {
-    event.preventDefault();
-    const message = input.trim();
-    if (!message || busy) return;
-
-    setMessages((current) => [...current, { role: "user", content: message }]);
-    setInput("");
-    setBusy(true);
-
-    try {
-      const res = await fetch(`${API_BASE}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, session_id: sessionId }),
-      });
-      if (!res.ok) throw new Error(`Chat request failed (${res.status})`);
-      const data: ChatResponse = await res.json();
-      setSessionId(data.session_id);
-      setMessages((current) => [...current, { role: "assistant", content: data.response }]);
-      setApiError(null);
-    } catch (error) {
-      setApiError(error instanceof Error ? error.message : "Chat failed");
-      setMessages((current) => [
-        ...current,
-        { role: "assistant", content: "Unable to reach CHIEF core. Check the API connection." },
-      ]);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <main className="shell">
-      <header className="topbar panel-edge">
-        <div className="brand-block">
-          <div className="brand-mark"><Bot size={28} /></div>
-          <div>
-            <h1>CHIEF</h1>
-            <p>Cognitive Hub for Intelligence, Execution &amp; Foresight</p>
-          </div>
-        </div>
-        <div className="header-status">
-          <StatusChip label="CORE" value={online ? "ONLINE" : "OFFLINE"} active={online} />
-          <StatusChip label="MILESTONE" value={system?.milestone || "CHIEF ZERO"} />
-          <StatusChip label="MODE" value={system?.environment?.toUpperCase() || "DEVELOPMENT"} />
-        </div>
-      </header>
-
-      <section className="workspace">
-        <aside className="left-rail panel-edge">
-          <div className="rail-title">COMMAND</div>
-          <nav>
-            {navItems.map(([Icon, label], index) => (
-              <button key={label} className={`nav-item ${index === 1 ? "active" : ""}`}>
-                <Icon size={17} />
-                <span>{label}</span>
-                {index === 1 && <ChevronRight size={14} className="push" />}
-              </button>
-            ))}
-          </nav>
-
-          <div className="objective-card">
-            <span className="eyebrow">ACTIVE OBJECTIVE</span>
-            <strong>CHIEF UI-001</strong>
-            <p>Command Center Shell</p>
-            <div className="progress-track"><span style={{ width: "42%" }} /></div>
-            <small>Interface deployment in progress</small>
-          </div>
-        </aside>
-
-        <section className="center-stack">
-          <section className="command-panel panel-edge">
-            <div className="panel-heading">
-              <div>
-                <span className="eyebrow">COMMAND CENTER</span>
-                <h2>DIRECT INTERFACE</h2>
-              </div>
-              <div className="signal"><span /> {modelLabel}</div>
-            </div>
-
-            <div className="chat-stream">
-              {messages.map((message, index) => (
-                <article key={index} className={`message ${message.role}`}>
-                  <div className="message-tag">{message.role === "assistant" ? "CHIEF" : "OPERATOR"}</div>
-                  <p>{message.content}</p>
-                </article>
-              ))}
-              {busy && <article className="message assistant"><div className="message-tag">CHIEF</div><p className="typing">PROCESSING DIRECTIVE...</p></article>}
-            </div>
-
-            <form className="command-input" onSubmit={sendMessage}>
-              <TerminalSquare size={18} />
-              <input
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                placeholder="Issue directive to CHIEF..."
-                aria-label="Message CHIEF"
-              />
-              <button type="submit" disabled={busy}><Send size={17} /> SEND</button>
-            </form>
-          </section>
-
-          <section className="lower-grid">
-            <Panel title="ACTIVE OBJECTIVES">
-              <Objective title="CHIEF interface" detail="Build tactical command shell" status="ACTIVE" />
-              <Objective title="Parcel Signals" detail="Project intelligence integration" status="READY" />
-              <Objective title="Local control" detail="Phone-accessible operations" status="READY" />
-            </Panel>
-            <Panel title="EXECUTION LOG">
-              <Log time="NOW" text="Command interface initialized" />
-              <Log time="API" text={online ? "FastAPI core responding" : "Core connection unavailable"} warn={!online} />
-              <Log time="NET" text={`Endpoint ${API_BASE}`} />
-            </Panel>
-            <Panel title="QUICK ACTIONS">
-              <div className="action-grid">
-                <Action icon={<TerminalSquare size={17} />} label="New Task" />
-                <Action icon={<Gauge size={17} />} label="System Scan" />
-                <Action icon={<Database size={17} />} label="Projects" />
-                <Action icon={<ShieldCheck size={17} />} label="Permissions" />
-              </div>
-            </Panel>
-          </section>
-        </section>
-
-        <aside className="right-rail">
-          <Panel title="SYSTEM HEALTH">
-            <div className={`health-ring ${online ? "online" : "offline"}`}>
-              <div><strong>{online ? "100%" : "--"}</strong><span>{online ? "NOMINAL" : "NO LINK"}</span></div>
-            </div>
-            <Metric label="CORE" value={online ? "ONLINE" : "OFFLINE"} pct={online ? 100 : 8} />
-            <Metric label="API" value={health?.version || "--"} pct={online ? 92 : 8} />
-            <Metric label="SESSION" value={sessionId ? "ACTIVE" : "READY"} pct={sessionId ? 84 : 58} />
-          </Panel>
-
-          <Panel title="LOCAL MODEL">
-            <div className="model-status">
-              <BrainCircuit size={35} />
-              <div><span>ENGINE</span><strong>OLLAMA</strong></div>
-            </div>
-            <p className="muted">Connected through CHIEF Core. Live model identity is returned with chat responses.</p>
-          </Panel>
-
-          <Panel title="ALERTS">
-            {apiError ? (
-              <div className="alert"><AlertTriangle size={17} /><span>{apiError}</span></div>
-            ) : (
-              <div className="clear"><ShieldCheck size={17} /> No active system alerts</div>
-            )}
-          </Panel>
-
-          <Panel title="SYSTEM IDENTITY">
-            <InfoRow label="NAME" value={system?.name || "CHIEF"} />
-            <InfoRow label="VERSION" value={system?.version || "0.0.1"} />
-            <InfoRow label="ENV" value={system?.environment || "development"} />
-          </Panel>
-        </aside>
-      </section>
-
-      <footer>
-        <span><i className={online ? "online-dot" : "offline-dot"} /> LINK: {online ? "SECURE" : "DISCONNECTED"}</span>
-        <span>NODE: CHIEF-LOCAL</span>
-        <span>SESSION: {sessionId ? sessionId.slice(0, 8).toUpperCase() : "UNASSIGNED"}</span>
-      </footer>
-    </main>
-  );
+function Panel({title,children,className=""}:{title:string;children:React.ReactNode;className?:string}){return <section className={`panel ${className}`}><header>{title}<i>•••</i></header><div className="panel-body">{children}</div></section>}
+function Meter({label,value,pct}:{label:string;value:string;pct:number}){return <div className="meter"><div><span>{label}</span><b>{value}</b></div><em><i style={{width:`${pct}%`}}/></em></div>}
+function App(){
+ const [health,setHealth]=useState<Health|null>(null),[system,setSystem]=useState<SystemInfo|null>(null),[input,setInput]=useState(""),[busy,setBusy]=useState(false),[menu,setMenu]=useState(false);
+ const [messages,setMessages]=useState<Message[]>([{role:"assistant",content:"CHIEF command interface online. Awaiting directive."}]);
+ useEffect(()=>{const load=async()=>{try{const [h,s]=await Promise.all([fetch(`${API}/health`),fetch(`${API}/system`)]);setHealth(await h.json());setSystem(await s.json())}catch{}};load();const t=setInterval(load,10000);return()=>clearInterval(t)},[]);
+ const online=health?.status==="online";
+ async function send(e:FormEvent){e.preventDefault();const value=input.trim();if(!value||busy)return;setMessages(x=>[...x,{role:"user",content:value}]);setInput("");setBusy(true);try{const r=await fetch(`${API}/chat`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:value})});const d=await r.json();setMessages(x=>[...x,{role:"assistant",content:d.response}])}catch{setMessages(x=>[...x,{role:"assistant",content:"Unable to reach CHIEF core. Tactical systems remain in local standby."}])}finally{setBusy(false)}}
+ return <main className="shell">
+  <header className="topbar"><button className="menu" onClick={()=>setMenu(!menu)}><Menu/></button><div className="brand"><div className="sigil"><Bot/></div><div><h1>CHIEF</h1><p>Cognitive Hub for Intelligence, Execution &amp; Foresight</p></div></div><div className="mission"><span>// MISSION STATUS</span><b><i/> {online?"ACTIVE":"STANDBY"}</b></div><div className="operation"><span>OPERATION DAYBREAK</span><small>Phase 3 / Urban Grid / Sector 7B</small></div><div className="sys"><span>SYSTEM TIME</span><b>21:43:32 UTC</b></div><div className="sys"><span>OPERATOR</span><b>DIRECTOR</b></div><div className="sys"><span>SESSION ID</span><b>CHIEF-7A91 <i/></b></div></header>
+  <div className="layout">
+   <aside className={`left ${menu?"open":""}`}><Panel title="COMMAND"><nav>{nav.map(([Icon,label],i)=><button className={i===0?"active":""} key={label}><Icon/>{label}</button>)}</nav></Panel><Panel title="MISSION OBJECTIVES"><label>PRIMARY OBJECTIVE</label><strong className="amber">Locate &amp; Neutralize HVT</strong><small>Extraction available</small><label>SECONDARY OBJECTIVES</label>{["Secure Intel Package","Disable Comms Array","Eliminate Patrol Groups  2/3"].map((x,i)=><p key={x}>□ {x}</p>)}</Panel><Panel title="THREAT LEVEL"><strong className="danger">ELEVATED</strong><Meter label="" value="78%" pct={78}/></Panel><Panel title="COMMS CHANNEL" className="comms"><small>ENCRYPTED / CHAT-01</small><div className="wave">||||||||||||||||||||||||</div><button>TRANSMIT</button></Panel></aside>
+   <section className="center"><Panel title="OPERATION DAYBREAK // SECTOR 7B // URBAN GRID" className="map-panel"><div className="map-grid"><div className="rings"/><span className="north">N</span><span className="west">W</span><span className="east">E</span><span className="south">S</span>{["R-12","S1","ECHO-3","R-05","S2"].map((x,i)=><b className={`target t${i}`} key={x}>{x}</b>)}<div className="scanline"/></div><div className="map-tools"><Crosshair/><Map/><Target/><Zap/><span>SCANNING...</span><b>67%</b></div></Panel><div className="bottom"><Panel title="TASK QUEUE">{["Locate HVT","Secure Intel Package","Disable Comms Array","Eliminate Patrol Groups","Extraction & Exfil"].map((x,i)=><div className="task" key={x}><b>0{i+1}</b><span>{x}<i style={{width:`${82-i*8}%`}}/></span><small>{i*3+2}m</small></div>)}</Panel><section className="stack"><Panel title="MISSION TIMELINE"><div className="timeline">20:12 — 20:16 — <b>20:29</b> — 20:45 — 21:00</div></Panel><Panel title="COMMAND LOG"><div className="log">[21:41:02] S2-RAIDER: Contact front.<br/>[21:41:18] INTEL: Signal strength nominal.<br/>[21:42:51] SYSTEM: Threat level elevated.</div></Panel></section><Panel title="QUICK ACTIONS">{["Ping Target","Mark Location","Dispatch Drone","Request CAS","Signal Jammer","System Override"].map(x=><button className="quick" key={x}><Crosshair/>{x}</button>)}</Panel></div></section>
+   <aside className="telemetry"><Panel title="SYSTEM HEALTH"><div className="health"><strong>{online?"92%":"--"}</strong><small>{online?"OPTIMAL":"NO LINK"}</small></div>{[["CPU","58%",58],["MEMORY","72%",72],["DISK","63%",63],["NETWORK","85%",85]].map(x=><Meter key={String(x[0])} label={String(x[0])} value={String(x[1])} pct={Number(x[2])}/>)}</Panel><Panel title="SIGNAL INTELLIGENCE"><label>LIVE INTERCEPTS</label><div className="wave small">||||||||||||||||||||||||||||||||</div><p>ENCRYPTION STRENGTH <b>AES-256</b></p><p>SIGNAL QUALITY <b>STRONG</b></p></Panel><Panel title="SQUAD TELEMETRY" className="squads">{["S1 - VIKING","S2 - RAIDER","S3 - GHOST","S4 - PHANTOM"].map((x,i)=><Meter key={x} label={x} value={`${98-i*2}%`} pct={98-i*2}/>)}</Panel><Panel title="SYSTEM DIAGNOSTICS"><div className="diagnostics"><div>{["Cognitive Engine","Data Core","Comm Relay","Sensor Array","Power Grid","Encryption Module"].map(x=><p key={x}><i/> {x}<b>Operational</b></p>)}</div><div><strong>98%</strong><div className="chart">⌁⌁⌁⌁⌁</div><Meter label="POWER" value="92%" pct={92}/></div></div></Panel></aside>
+   <aside className="right"><Panel title="THREAT INTEL"><div className="threat"><strong>◀ ACTIVE THREATS</strong><b>07</b></div>{["High Value Target  01","Enemy Squads  03","SAM Sites  02","Electronic Warfare  01"].map(x=><p className="bullet" key={x}>◉ {x}</p>)}<Meter label="INTEL CONFIDENCE" value="87%" pct={87}/></Panel><Panel title="RECON STATUS"><small>DRONE FEED // DR-7</small><div className="recon"><Map/></div><div className="tabs">THERMAL　 IR　 VIS　 NW</div></Panel><Panel title="ALERTS FEED">{alerts.map((x,i)=><div className="alert" key={x}><AlertTriangle/><span>{x}</span><small>{i*2+2}m ago</small></div>)}<button className="view">VIEW ALL ALERTS</button></Panel><Panel title="SHORTCUTS"><div className="shortcuts">{[[TerminalSquare,"New Task"],[Database,"Intel Report"],[Box,"Mission Brief"],[Wrench,"System Audit"],[Gauge,"Logs"],[Settings,"Settings"]].map(([I,x])=><button key={String(x)}><I/>{String(x)}</button>)}</div></Panel></aside>
+  </div>
+  <footer><span>◔ LINK: SECURE</span><span>NODE: CHIEF-HUB-01</span><span>ENCRYPTION: AES-256</span><span>DATA INTEGRITY: VERIFIED</span><span>CLASSIFICATION: OPERATIONAL CONTROL</span></footer>
+  <section className="mobile-command"><div className="messages">{messages.slice(-4).map((m,i)=><p className={m.role} key={i}><b>{m.role==="assistant"?"CHIEF":"OPERATOR"}</b>{m.content}</p>)}</div><form onSubmit={send}><TerminalSquare/><input aria-label="Message CHIEF" value={input} onChange={e=>setInput(e.target.value)} placeholder="Issue directive..."/><button><Send/></button></form></section>
+ </main>
 }
+createRoot(document.getElementById("root")!).render(<React.StrictMode><App/></React.StrictMode>);
 
-function StatusChip({ label, value, active = false }: { label: string; value: string; active?: boolean }) {
-  return <div className="status-chip"><span>{label}</span><strong className={active ? "teal" : ""}>{value}</strong></div>;
-}
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="panel panel-edge"><div className="panel-title">{title}</div>{children}</section>;
-}
-function Objective({ title, detail, status }: { title: string; detail: string; status: string }) {
-  return <div className="objective-row"><div><strong>{title}</strong><span>{detail}</span></div><b>{status}</b></div>;
-}
-function Log({ time, text, warn = false }: { time: string; text: string; warn?: boolean }) {
-  return <div className="log-row"><code>{time}</code><span className={warn ? "warn" : ""}>{text}</span></div>;
-}
-function Action({ icon, label }: { icon: React.ReactNode; label: string }) {
-  return <button className="action-button">{icon}<span>{label}</span></button>;
-}
-function Metric({ label, value, pct }: { label: string; value: string; pct: number }) {
-  return <div className="metric"><div><span>{label}</span><strong>{value}</strong></div><div className="metric-track"><span style={{ width: `${pct}%` }} /></div></div>;
-}
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return <div className="info-row"><span>{label}</span><strong>{value}</strong></div>;
-}
-
-createRoot(document.getElementById("root")!).render(<React.StrictMode><App /></React.StrictMode>);
