@@ -1,0 +1,206 @@
+/* CHIEF_UI_CONCEPT_1 reference-lock pass.
+   Desktop target canvas: 1664 x 928. The live data changes; the composition does not. */
+
+@media (min-width: 1101px) {
+  html, body, #root {
+    min-height: 100vh;
+    background: #010405;
+  }
+
+  body {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    overflow: auto;
+  }
+
+  #root {
+    width: 100%;
+  }
+
+  .shell {
+    width: 1664px;
+    height: 928px;
+    min-height: 928px;
+    margin: 0 auto;
+    padding: 5px;
+    grid-template-rows: 90px minmax(0, 1fr) 31px;
+    gap: 6px;
+    overflow: hidden;
+  }
+
+  .topbar {
+    grid-template-columns: 500px 1fr;
+    padding: 0 12px 0 20px;
+  }
+
+  .brand-block { gap: 15px; }
+  .brand-mark { width: 58px; height: 58px; flex-basis: 58px; }
+  h1 { font-size: 46px; letter-spacing: .135em; }
+  .brand-block p { font-size: 11px; margin-top: 8px; letter-spacing: .055em; }
+
+  .mission-strip {
+    grid-template-columns: 150px 300px 170px 155px 185px;
+  }
+  .header-cell { padding: 10px 14px; }
+  .header-cell span { font-size: 8px; }
+  .header-cell strong { font-size: 11px; margin-top: 5px; }
+  .header-cell small { font-size: 8px; }
+
+  .workspace {
+    grid-template-columns: 190px 846px 606px;
+    gap: 6px;
+  }
+
+  .right-area {
+    grid-template-columns: 350px 250px;
+    gap: 6px;
+  }
+
+  .center-column {
+    grid-template-rows: minmax(0, 1fr) 211px;
+    gap: 6px;
+  }
+
+  .left-column,
+  .telemetry-column,
+  .utility-column {
+    gap: 6px;
+  }
+
+  .panel { padding: 9px 10px; }
+  .panel-title {
+    min-height: 20px;
+    padding-bottom: 7px;
+    margin-bottom: 8px;
+  }
+  .panel-title span,
+  .eyebrow,
+  .map-readout span { font-size: 8px; letter-spacing: .17em; }
+
+  .nav-item { min-height: 38px; padding: 0 10px; gap: 10px; }
+  .nav-item span { font-size: 9px; }
+  .objective > span { font-size: 7px; }
+  .objective strong { font-size: 9px; }
+  .objective small { font-size: 7px; }
+  .risk-head span { font-size: 8px; }
+  .risk-head strong { font-size: 16px; }
+  .channel-line { font-size: 7px; }
+
+  .map-panel {
+    grid-template-rows: 48px minmax(0, 1fr) 35px;
+  }
+  .map-titlebar { padding: 8px 12px; }
+  .map-titlebar h2 { font-size: 9px; }
+  .live-badge { font-size: 8px; }
+
+  .network-map::before {
+    left: 8%;
+    top: 2.5%;
+    width: 84%;
+  }
+  .grid-floor { background-size: 27px 27px; }
+  .radar-ring.r1 { width: 20%; }
+  .radar-ring.r2 { width: 34%; }
+  .radar-ring.r3 { width: 49%; }
+  .radar-ring.r4 { width: 64%; }
+  .radar-ring.r5 { width: 79%; }
+  .compass { font-size: 10px; }
+
+  .map-node { transform: translate(-50%, -50%) scale(1.08); }
+  .center-node { transform: translate(-50%, -50%) scale(1.15); }
+  .node-label strong { font-size: 8px; }
+  .node-label span { font-size: 6px; }
+  .map-readout strong { font-size: 10px; }
+  .map-readout small { font-size: 7px; }
+
+  .map-toolbar { font-size: 7px; }
+  .map-toolbar > span { gap: 5px; }
+
+  .bottom-grid {
+    grid-template-columns: 255px 1fr 180px;
+    gap: 6px;
+  }
+  .middle-bottom { gap: 6px; }
+  .task-row, .log-row, .info-row { min-height: 24px; }
+  .task-row span, .log-row span { font-size: 8px; }
+  .log-row code { font-size: 7px; }
+  .timeline { min-height: 65px; }
+  .timeline-item span { font-size: 7px; }
+  .timeline-item strong { font-size: 8px; }
+  .quick-stack .action-button { min-height: 31px; }
+  .action-button span { font-size: 7px; }
+
+  .health-panel {
+    min-height: 154px;
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    grid-template-rows: 20px 1fr;
+    column-gap: 13px;
+  }
+  .health-panel .panel-title { grid-column: 1 / -1; }
+  .health-ring { width: 104px; height: 104px; margin: 2px auto 0; }
+  .health-ring strong { font-size: 23px; }
+  .health-ring span { font-size: 7px; }
+  .health-metrics { align-self: center; }
+  .metric { margin-top: 8px; }
+  .metric > div:first-child { font-size: 8px; }
+  .metric strong { font-size: 8px; }
+
+  .model-panel { min-height: 132px; }
+  .model-primary strong { font-size: 12px; }
+  .model-primary span { font-size: 7px; }
+  .signal-strip { height: 28px; }
+
+  .agents-panel { flex: 1 1 auto; min-height: 210px; }
+  .agent-row { min-height: 37px; }
+  .agent-row strong { font-size: 8px; }
+  .agent-row span, .agent-row b { font-size: 7px; }
+  .spark { width: 80px; height: 22px; }
+
+  .diagnostics-panel { min-height: 155px; }
+  .diag-grid { gap: 12px; }
+  .info-row span { font-size: 7px; }
+  .info-row strong { font-size: 8px; }
+  .gauge-block span { font-size: 7px; }
+  .gauge-block strong { font-size: 9px; }
+
+  .services-panel { min-height: 166px; }
+  .service-row { min-height: 25px; }
+  .service-row span, .service-row strong { font-size: 7px; }
+
+  .network-status-panel { min-height: 215px; }
+  .mini-map { min-height: 105px; }
+  .mini-map span { font-size: 7px; }
+  .mini-map strong { font-size: 9px; }
+
+  .alerts-panel { flex: 1 1 auto; min-height: 195px; }
+  .alert, .clear { font-size: 8px; }
+
+  .shortcuts-panel { min-height: 118px; }
+  .shortcut-grid .action-button { min-height: 35px; }
+
+  .footer-bar { font-size: 7px; letter-spacing: .12em; padding: 0 12px; }
+}
+
+/* Scale the fixed reference canvas down rather than reflow it on medium desktop widths. */
+@media (min-width: 1101px) and (max-width: 1663px) {
+  .shell {
+    width: 100vw;
+    height: calc(100vw * 0.5576923077);
+    min-height: calc(100vw * 0.5576923077);
+    grid-template-rows: calc(90 / 1664 * 100vw) minmax(0, 1fr) calc(31 / 1664 * 100vw);
+    transform-origin: top center;
+  }
+
+  .workspace {
+    grid-template-columns: 11.418% 50.902% 36.474%;
+  }
+  .right-area { grid-template-columns: 57.76% 41.25%; }
+}
+
+/* Mobile keeps the existing responsive CHIEF layout rather than forcing a desktop canvas. */
+@media (max-width: 1100px) {
+  body { display: block; overflow-x: hidden; }
+  .shell { width: 100%; height: auto; min-height: 100vh; margin: 0; }
+}
