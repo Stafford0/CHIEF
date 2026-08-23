@@ -59,3 +59,42 @@ class SessionStore:
         """Return the number of active sessions."""
 
         return len(self._sessions)
+
+    def pending_tool_calls(self) -> list[dict[str, str]]:
+        """Return live approval-gated tool calls waiting in active sessions."""
+
+        pending: list[dict[str, str]] = []
+        for session in self._sessions.values():
+            call = session.pending_tool_call
+            if call is None:
+                continue
+            pending.append(
+                {
+                    "name": call.description,
+                    "tool": call.tool_name,
+                    "status": "awaiting approval",
+                    "session_id": str(session.id),
+                }
+            )
+        return pending
+
+    def summaries(self) -> list[dict[str, str | int]]:
+        """Return lightweight live summaries for active sessions."""
+
+        return [
+            {
+                "session_id": str(session.id),
+                "messages": len(session.messages),
+                "status": (
+                    "awaiting approval"
+                    if session.pending_tool_call is not None
+                    else "active"
+                ),
+                "updated_at": session.updated_at.isoformat(),
+            }
+            for session in sorted(
+                self._sessions.values(),
+                key=lambda item: item.updated_at,
+                reverse=True,
+            )
+        ]
