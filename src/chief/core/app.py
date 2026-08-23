@@ -3,6 +3,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -25,6 +26,18 @@ app = FastAPI(
     title="CHIEF",
     description="Cognitive Hub for Intelligence, Execution & Foresight",
     version="0.0.1",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    ],
+    allow_origin_regex=r"http://(?:192\.168|10\.\d|172\.(?:1[6-9]|2\d|3[01]))\.\d+\.\d+:5173",
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 model_provider = OllamaProvider(model="qwen3:4b")
@@ -88,7 +101,6 @@ def health() -> dict[str, str]:
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def chat_ui() -> HTMLResponse:
     """Serve CHIEF's lightweight local chat interface."""
-
     return HTMLResponse(WEB_UI_PATH.read_text(encoding="utf-8"))
 
 
@@ -106,7 +118,6 @@ def system_info() -> dict[str, str]:
 @app.get("/tools", response_model=list[ToolDefinitionResponse])
 def list_tools() -> list[ToolDefinitionResponse]:
     """List tools currently available through CHIEF's guarded registry."""
-
     return [
         ToolDefinitionResponse(
             name=definition.name,
@@ -121,13 +132,11 @@ def list_tools() -> list[ToolDefinitionResponse]:
 @app.post("/tools/execute", response_model=ToolExecuteResponse)
 def execute_tool(tool_request: ToolExecuteRequest) -> ToolExecuteResponse:
     """Execute a tool through CHIEF's policy and audit gates."""
-
     result = tool_registry.execute(
         tool_request.name,
         tool_request.arguments,
         approved=tool_request.approved,
     )
-
     return ToolExecuteResponse(
         success=result.success,
         content=result.content,
@@ -139,9 +148,7 @@ def execute_tool(tool_request: ToolExecuteRequest) -> ToolExecuteResponse:
 @app.post("/chat", response_model=ChatResponse)
 def chat(chat_request: ChatRequest) -> ChatResponse:
     try:
-        session = session_store.get_or_create(
-            chat_request.session_id
-        )
+        session = session_store.get_or_create(chat_request.session_id)
     except KeyError:
         session = session_store.create()
 
@@ -175,9 +182,7 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
             tool_description=pending_call.description,
         )
 
-    memory_command = memory_command_parser.parse(
-        chat_request.message
-    )
+    memory_command = memory_command_parser.parse(chat_request.message)
 
     if isinstance(memory_command, MemoryCommand):
         memory = memory_manager.remember(
@@ -187,18 +192,9 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
             confidence=1.0,
             importance=0.8,
         )
-
         response_text = f"Memory saved: {memory.content}"
-
-        session.add_message(
-            "user",
-            chat_request.message,
-        )
-        session.add_message(
-            "assistant",
-            response_text,
-        )
-
+        session.add_message("user", chat_request.message)
+        session.add_message("assistant", response_text)
         return ChatResponse(
             response=response_text,
             provider="chief-memory",
@@ -208,18 +204,14 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
 
     if isinstance(memory_command, CorrectMemoryCommand):
         try:
-            old_memory = memory_manager.resolve_exact(
-                memory_command.old_content
-            )
+            old_memory = memory_manager.resolve_exact(memory_command.old_content)
         except ValueError:
             response_text = (
-                "I found multiple active memories matching "
-                "that exact content, so I did not change anything."
+                "I found multiple active memories matching that exact content, "
+                "so I did not change anything."
             )
-
             session.add_message("user", chat_request.message)
             session.add_message("assistant", response_text)
-
             return ChatResponse(
                 response=response_text,
                 provider="chief-memory",
@@ -229,13 +221,11 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
 
         if old_memory is None:
             response_text = (
-                "I could not find an active memory matching "
-                "that exact content, so I did not change anything."
+                "I could not find an active memory matching that exact content, "
+                "so I did not change anything."
             )
-
             session.add_message("user", chat_request.message)
             session.add_message("assistant", response_text)
-
             return ChatResponse(
                 response=response_text,
                 provider="chief-memory",
@@ -250,14 +240,9 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
             source_description="Explicit user correction",
             confidence=1.0,
         )
-
-        response_text = (
-            f"Memory corrected: {new_memory.content}"
-        )
-
+        response_text = f"Memory corrected: {new_memory.content}"
         session.add_message("user", chat_request.message)
         session.add_message("assistant", response_text)
-
         return ChatResponse(
             response=response_text,
             provider="chief-memory",
@@ -267,18 +252,14 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
 
     if isinstance(memory_command, ForgetMemoryCommand):
         try:
-            memory = memory_manager.resolve_exact(
-                memory_command.content
-            )
+            memory = memory_manager.resolve_exact(memory_command.content)
         except ValueError:
             response_text = (
-                "I found multiple active memories matching "
-                "that exact content, so I did not forget anything."
+                "I found multiple active memories matching that exact content, "
+                "so I did not forget anything."
             )
-
             session.add_message("user", chat_request.message)
             session.add_message("assistant", response_text)
-
             return ChatResponse(
                 response=response_text,
                 provider="chief-memory",
@@ -288,13 +269,11 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
 
         if memory is None:
             response_text = (
-                "I could not find an active memory matching "
-                "that exact content, so I did not forget anything."
+                "I could not find an active memory matching that exact content, "
+                "so I did not forget anything."
             )
-
             session.add_message("user", chat_request.message)
             session.add_message("assistant", response_text)
-
             return ChatResponse(
                 response=response_text,
                 provider="chief-memory",
@@ -303,14 +282,9 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
             )
 
         memory_manager.forget(memory)
-
-        response_text = (
-            f"Memory forgotten: {memory.content}"
-        )
-
+        response_text = f"Memory forgotten: {memory.content}"
         session.add_message("user", chat_request.message)
         session.add_message("assistant", response_text)
-
         return ChatResponse(
             response=response_text,
             provider="chief-memory",
@@ -320,10 +294,7 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
 
     planned_call = tool_planner.plan(chat_request.message)
     if planned_call is not None:
-        result = tool_registry.execute(
-            planned_call.tool_name,
-            planned_call.arguments,
-        )
+        result = tool_registry.execute(planned_call.tool_name, planned_call.arguments)
 
         if result.content == "Tool execution requires approval.":
             session.pending_tool_call = planned_call
@@ -347,27 +318,18 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
             session_id=session.id,
             status=response_status,
             pending_action=(
-                "approve_or_cancel"
-                if response_status == "pending_approval"
-                else None
+                "approve_or_cancel" if response_status == "pending_approval" else None
             ),
             tool_description=planned_call.description,
         )
 
-    memory_context = memory_manager.build_context(
-        chat_request.message
-    )
-
+    memory_context = memory_manager.build_context(chat_request.message)
     conversation_context = session.build_context()
-
     context_parts = [SYSTEM_IDENTITY]
-
     if memory_context:
         context_parts.append(memory_context)
-
     if conversation_context:
         context_parts.append(conversation_context)
-
     system_prompt = "\n\n".join(context_parts)
 
     try:
@@ -387,16 +349,8 @@ def chat(chat_request: ChatRequest) -> ChatResponse:
             status="unavailable",
         )
 
-    session.add_message(
-        "user",
-        chat_request.message,
-    )
-
-    session.add_message(
-        "assistant",
-        result.content,
-    )
-
+    session.add_message("user", chat_request.message)
+    session.add_message("assistant", result.content)
     return ChatResponse(
         response=result.content,
         provider=result.provider,
