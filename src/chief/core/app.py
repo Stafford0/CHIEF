@@ -1,9 +1,14 @@
+import asyncio
 import hashlib
 import ipaddress
+import json
 import logging
 import re
 import secrets
+import threading
 import time
+from collections.abc import AsyncIterator, Callable
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from datetime import time as clock_time
 from pathlib import Path
@@ -13,7 +18,7 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.requests import Request
 
@@ -46,6 +51,7 @@ from chief.memory.sqlite import SQLiteMemoryStore
 from chief.models.ollama import OllamaProvider
 from chief.models.router import ModelRouter
 from chief.notifications import AttentionPolicy, NotificationStore
+from chief.personas import CHIEF_PERSONA, ULTRON_PERSONA
 from chief.portfolio import SQLitePortfolioStore
 from chief.runs import (
     ActionResult,
@@ -233,6 +239,36 @@ model_provider = OllamaProvider(
     max_response_bytes=settings.max_model_response_bytes,
 )
 model_router = ModelRouter([model_provider])
+ultron_provider = OllamaProvider(
+    model=settings.ultron_ollama_model,
+    base_url=settings.ollama_url,
+    timeout=settings.model_timeout_seconds,
+    max_response_bytes=settings.max_model_response_bytes,
+)
+
+_chat_stream_callback: ContextVar[Callable[[dict[str, Any]], None] | None] = ContextVar(
+    "chief_chat_stream_callback",
+    default=None,
+)
+_chat_stream_cancelled: ContextVar[threading.Event | None] = ContextVar(
+    "chief_chat_stream_cancelled",
+    default=None,
+)
+
+
+def _emit_stream_event(event: dict[str, Any]) -> None:
+    callback = _chat_stream_callback.get()
+    if callback is not None:
+        callback(event)
+
+
+def _emit_agent_message(message: "AgentChatMessage") -> None:
+    _emit_stream_event({"type": "agent", "message": message.model_dump(mode="json")})
+
+
+def _stream_was_cancelled() -> bool:
+    cancellation = _chat_stream_cancelled.get()
+    return cancellation is not None and cancellation.is_set()
 
 
 def generate_model(prompt: str, system_prompt: str):
@@ -241,6 +277,12 @@ def generate_model(prompt: str, system_prompt: str):
     if model_provider not in router.providers:
         router = ModelRouter([model_provider])
     return router.generate(prompt, system_prompt)
+
+
+def generate_ultron_model(prompt: str, system_prompt: str):
+    """Use Ultron's dedicated local model without exposing CHIEF's tool router."""
+
+    return ModelRouter([ultron_provider]).generate(prompt, system_prompt)
 
 
 memory_store = SQLiteMemoryStore()
@@ -403,6 +445,13 @@ class ChatRequest(BaseModel):
     session_id: UUID | None = None
 
 
+class AgentChatMessage(BaseModel):
+    speaker: str
+    content: str
+    provider: str
+    model: str
+
+
 class ChatResponse(BaseModel):
     response: str
     provider: str
@@ -411,6 +460,7 @@ class ChatResponse(BaseModel):
     status: str = "completed"
     pending_action: str | None = None
     tool_description: str | None = None
+    messages: list[AgentChatMessage] = Field(default_factory=list)
 
 
 class ToolDefinitionResponse(BaseModel):
@@ -508,7 +558,7 @@ def health() -> dict[str, str]:
 
 @app.get("/ready", response_model=None)
 def readiness() -> dict[str, Any] | JSONResponse:
-    """Check the core state stores instead of returning a static readiness claim."""
+    """Report full, degraded, or unavailable runtime capability."""
     checks = {
         "memory": _run_readiness_check("memory", memory_store.health),
         "work_store": _run_readiness_check("work_store", work_store.health),
@@ -539,11 +589,43 @@ def readiness() -> dict[str, Any] | JSONResponse:
             lambda: notification_store.get_by_idempotency_key("__readiness__") is None,
         ),
     }
+    try:
+        installed_models = model_provider.available_models()
+    except (RuntimeError, TypeError):
+        logger.exception("readiness_check_failed", extra={"component": "ollama"})
+        installed_models = set()
+        ollama_online = False
+    else:
+        ollama_online = True
+
+    checks["ollama"] = ollama_online
+    checks["chief_model"] = settings.ollama_model in installed_models
+    checks["ultron_model"] = (
+        not settings.ultron_enabled or settings.ultron_ollama_model in installed_models
+    )
+    core_checks = {name: result for name, result in checks.items() if name not in {"ultron_model"}}
+    core_ready = all(core_checks.values())
+    if core_ready and checks["ultron_model"]:
+        status = "ready"
+    elif core_ready:
+        status = "degraded"
+    else:
+        status = "not_ready"
     payload = {
-        "status": "ready" if all(checks.values()) else "not_ready",
+        "status": status,
         "checks": checks,
+        "agents": {
+            "chief": "ready" if checks["chief_model"] else "unavailable",
+            "ultron": (
+                "disabled"
+                if not settings.ultron_enabled
+                else "ready"
+                if checks["ultron_model"]
+                else "unavailable"
+            ),
+        },
     }
-    if payload["status"] != "ready":
+    if payload["status"] == "not_ready":
         return JSONResponse(status_code=503, content=payload)
     return payload
 
@@ -1055,6 +1137,229 @@ def execute_plan(plan: ExecutionPlan, request: Request) -> PlanOutcome:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+def _addressed_to_ultron(message: str) -> bool:
+    return re.match(r"^\s*(?:hey[\s,]+)?ultron\b", message, flags=re.IGNORECASE) is not None
+
+
+def _ultron_participation_command(message: str) -> str | None:
+    """Parse only direct owner commands, never quoted or analytical mentions."""
+
+    persistent_silence = (
+        r"^\s*ultron\s*[,;:\-]?\s*(?:please\s+)?(?:remain|stay|be)\s+silent\s+"
+        r"until\s+(?:i\s+)?(?:bring\s+you\s+back|say\s+otherwise)[.!]?\s*$"
+    )
+    this_turn_silence = (
+        r"^\s*ultron\s*[,;:\-]?\s*(?:please\s+)?"
+        r"(?:(?:remain|stay|be)\s+silent|(?:do\s+not|don't)\s+"
+        r"(?:respond|reply|speak|answer))(?:\s+(?:for\s+)?this\s+turn)?[.!]?\s*$"
+    )
+    no_reply_this_turn = (
+        r"^\s*no\s+ultron\s+(?:response|reply|comment)"
+        r"(?:\s+this\s+(?:turn|time))?[.!]?\s*$"
+    )
+    rejoin = (
+        r"^\s*ultron\s*[,;:\-]?\s*(?:please\s+)?"
+        r"(?:rejoin|come\s+back|you\s+can\s+(?:speak|respond)\s+again)[.!]?\s*$"
+    )
+    if re.fullmatch(persistent_silence, message, flags=re.IGNORECASE):
+        return "silence_until_rejoined"
+    if re.fullmatch(this_turn_silence, message, flags=re.IGNORECASE) or re.fullmatch(
+        no_reply_this_turn,
+        message,
+        flags=re.IGNORECASE,
+    ):
+        return "silence_this_turn"
+    if re.fullmatch(rejoin, message, flags=re.IGNORECASE):
+        return "rejoin"
+    return None
+
+
+def _ultron_silenced_by_user(message: str) -> bool:
+    return _ultron_participation_command(message) in {
+        "silence_this_turn",
+        "silence_until_rejoined",
+    }
+
+
+def _visible_model_content(content: str) -> str | None:
+    cleaned = content.strip()
+    if not cleaned or cleaned == "[[SILENT]]":
+        return None
+    return cleaned
+
+
+def _is_message_echo(candidate: str, source: str) -> bool:
+    """Reject an agent turn that merely repeats the other visible speaker."""
+
+    cleaned = re.sub(r"^\s*CHIEF\s*:\s*", "", candidate, flags=re.IGNORECASE)
+
+    def normalize(value: str) -> str:
+        return " ".join(value.split()).casefold()
+
+    return normalize(cleaned) == normalize(source)
+
+
+def _speaker_contribution(content: str, *, speaker: str, other_speaker: str) -> str | None:
+    """Keep only the attributed agent's text when a model scripts multiple speakers."""
+
+    own_pattern = re.compile(
+        rf"^\s*{re.escape(speaker)}\s*:\s*", flags=re.IGNORECASE | re.MULTILINE
+    )
+    other_pattern = re.compile(
+        rf"^\s*{re.escape(other_speaker)}\s*:\s*", flags=re.IGNORECASE | re.MULTILINE
+    )
+    own_match = own_pattern.search(content)
+    start = own_match.end() if own_match else 0
+    other_match = other_pattern.search(content, pos=start)
+    if other_match:
+        end = other_match.start()
+    else:
+        end = len(content)
+    contribution = content[start:end].strip()
+    contribution = re.sub(
+        rf"^\s*I(?:'ll|\s+will)\s+(?:respond|answer)\s+as\s+{re.escape(speaker)}\.?\s*",
+        "",
+        contribution,
+        flags=re.IGNORECASE,
+    ).strip()
+    return contribution or None
+
+
+def _ultron_turn(
+    *,
+    session,
+    user_message: str,
+    chief_message: str | None = None,
+    leads: bool = False,
+) -> AgentChatMessage | None:
+    if _stream_was_cancelled():
+        return None
+    if not settings.ultron_enabled:
+        _emit_stream_event(
+            {
+                "type": "status",
+                "speaker": "ULTRON",
+                "state": "disabled",
+                "message": "Ultron is disabled.",
+            }
+        )
+        return None
+    if session.ultron_silenced or _ultron_silenced_by_user(user_message):
+        _emit_stream_event(
+            {
+                "type": "status",
+                "speaker": "ULTRON",
+                "state": "silent",
+                "message": "Ultron is silent.",
+            }
+        )
+        return None
+
+    context_parts = [ULTRON_PERSONA]
+    conversation_context = session.build_context()
+    if conversation_context:
+        context_parts.append(conversation_context)
+    if chief_message:
+        context_parts.append(
+            "CURRENT CHIEF RESPONSE\n\n"
+            f"CHIEF: {chief_message}\n\n"
+            "Decide whether you have something worthwhile to add to this exchange."
+        )
+    elif leads:
+        context_parts.append("The user addressed you directly. Lead this exchange and answer them.")
+
+    _emit_stream_event(
+        {
+            "type": "status",
+            "speaker": "ULTRON",
+            "state": "thinking",
+            "message": "Ultron is considering.",
+        }
+    )
+    try:
+        result = generate_ultron_model(
+            prompt=user_message,
+            system_prompt="\n\n".join(context_parts),
+        )
+    except RuntimeError:
+        logger.exception("ultron_model_unavailable")
+        _emit_stream_event(
+            {
+                "type": "status",
+                "speaker": "ULTRON",
+                "state": "unavailable",
+                "message": "Ultron is unavailable for this turn.",
+            }
+        )
+        return None
+
+    if _stream_was_cancelled():
+        return None
+
+    content = _visible_model_content(result.content)
+    if content is None:
+        _emit_stream_event(
+            {
+                "type": "status",
+                "speaker": "ULTRON",
+                "state": "silent",
+                "message": "Ultron chose not to add anything.",
+            }
+        )
+        return None
+    content = _speaker_contribution(content, speaker="ULTRON", other_speaker="CHIEF")
+    if content is None:
+        return None
+    if chief_message and _is_message_echo(content, chief_message):
+        return None
+    return AgentChatMessage(
+        speaker="ULTRON",
+        content=content,
+        provider=result.provider,
+        model=result.model,
+    )
+
+
+def _record_conversation_turn(
+    session,
+    user_message: str,
+    messages: list[AgentChatMessage],
+) -> None:
+    session.add_message("user", user_message)
+    for message in messages:
+        session.add_message(message.speaker.casefold(), message.content)
+
+
+def _deterministic_messages(
+    *,
+    session,
+    user_message: str,
+    chief_message: str,
+    provider: str,
+    model: str = "deterministic",
+) -> list[AgentChatMessage]:
+    """Attribute a completed CHIEF system turn and let tool-free Ultron evaluate it."""
+
+    chief = AgentChatMessage(
+        speaker="CHIEF",
+        content=chief_message,
+        provider=provider,
+        model=model,
+    )
+    messages = [chief]
+    _emit_agent_message(chief)
+    ultron_message = _ultron_turn(
+        session=session,
+        user_message=user_message,
+        chief_message=chief_message,
+    )
+    if ultron_message is not None:
+        session.add_message("ultron", ultron_message.content)
+        messages.append(ultron_message)
+        _emit_agent_message(ultron_message)
+    return messages
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
     try:
@@ -1067,6 +1372,29 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
 
+    participation_command = _ultron_participation_command(chat_request.message)
+    if participation_command == "silence_until_rejoined":
+        session.set_ultron_silenced(True)
+        response_text = "Ultron will remain silent until you explicitly bring him back."
+        session.add_message("user", chat_request.message)
+        session.add_message("assistant", response_text)
+        chief_message = AgentChatMessage(
+            speaker="CHIEF",
+            content=response_text,
+            provider="chief-system",
+            model="deterministic",
+        )
+        _emit_agent_message(chief_message)
+        return ChatResponse(
+            response=response_text,
+            provider="chief-system",
+            model="deterministic",
+            session_id=session.id,
+            messages=[chief_message],
+        )
+    if participation_command == "rejoin":
+        session.set_ultron_silenced(False)
+
     pending_action = tool_planner.pending_action(chat_request.message)
     if pending_action == PendingAction.APPROVE and not settings.execution_enabled:
         response_text = "CHIEF execution is paused by the operator kill switch."
@@ -1078,6 +1406,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
             model="deterministic",
             session_id=session.id,
             status="execution_paused",
+            messages=_deterministic_messages(
+                session=session,
+                user_message=chat_request.message,
+                chief_message=response_text,
+                provider="chief-system",
+            ),
         )
 
     pending = (
@@ -1133,6 +1467,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
             session_id=session.id,
             status=response_status,
             tool_description=pending_call.description,
+            messages=_deterministic_messages(
+                session=session,
+                user_message=chat_request.message,
+                chief_message=response_text,
+                provider="chief-tools",
+            ),
         )
 
     memory_command = memory_command_parser.parse(chat_request.message)
@@ -1154,6 +1494,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
             provider="chief-memory",
             model="deterministic",
             session_id=session.id,
+            messages=_deterministic_messages(
+                session=session,
+                user_message=chat_request.message,
+                chief_message=response_text,
+                provider="chief-memory",
+            ),
         )
 
     if isinstance(memory_command, CorrectMemoryCommand):
@@ -1171,6 +1517,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
                 provider="chief-memory",
                 model="deterministic",
                 session_id=session.id,
+                messages=_deterministic_messages(
+                    session=session,
+                    user_message=chat_request.message,
+                    chief_message=response_text,
+                    provider="chief-memory",
+                ),
             )
 
         if old_memory is None:
@@ -1185,6 +1537,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
                 provider="chief-memory",
                 model="deterministic",
                 session_id=session.id,
+                messages=_deterministic_messages(
+                    session=session,
+                    user_message=chat_request.message,
+                    chief_message=response_text,
+                    provider="chief-memory",
+                ),
             )
 
         new_memory = memory_manager.correct(
@@ -1203,6 +1561,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
             provider="chief-memory",
             model="deterministic",
             session_id=session.id,
+            messages=_deterministic_messages(
+                session=session,
+                user_message=chat_request.message,
+                chief_message=response_text,
+                provider="chief-memory",
+            ),
         )
 
     if isinstance(memory_command, ForgetMemoryCommand):
@@ -1220,6 +1584,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
                 provider="chief-memory",
                 model="deterministic",
                 session_id=session.id,
+                messages=_deterministic_messages(
+                    session=session,
+                    user_message=chat_request.message,
+                    chief_message=response_text,
+                    provider="chief-memory",
+                ),
             )
 
         if memory is None:
@@ -1234,6 +1604,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
                 provider="chief-memory",
                 model="deterministic",
                 session_id=session.id,
+                messages=_deterministic_messages(
+                    session=session,
+                    user_message=chat_request.message,
+                    chief_message=response_text,
+                    provider="chief-memory",
+                ),
             )
 
         memory_manager.forget(memory)
@@ -1246,6 +1622,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
             provider="chief-memory",
             model="deterministic",
             session_id=session.id,
+            messages=_deterministic_messages(
+                session=session,
+                user_message=chat_request.message,
+                chief_message=response_text,
+                provider="chief-memory",
+            ),
         )
 
     planned_call = tool_planner.plan(chat_request.message)
@@ -1261,6 +1643,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
                 session_id=session.id,
                 status="execution_paused",
                 tool_description=planned_call.description,
+                messages=_deterministic_messages(
+                    session=session,
+                    user_message=chat_request.message,
+                    chief_message=response_text,
+                    provider="chief-system",
+                ),
             )
         result = tool_registry.execute(
             planned_call.tool_name,
@@ -1299,17 +1687,56 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
             status=response_status,
             pending_action=("approve_or_cancel" if response_status == "pending_approval" else None),
             tool_description=planned_call.description,
+            messages=_deterministic_messages(
+                session=session,
+                user_message=chat_request.message,
+                chief_message=response_text,
+                provider="chief-tools",
+            ),
         )
 
     memory_context = memory_manager.build_context(chat_request.message)
     conversation_context = session.build_context()
-    context_parts = [SYSTEM_IDENTITY]
+    context_parts = [SYSTEM_IDENTITY, CHIEF_PERSONA]
     if memory_context:
         context_parts.append(memory_context)
     if conversation_context:
         context_parts.append(conversation_context)
+
+    ultron_leads = _addressed_to_ultron(chat_request.message)
+    agent_messages: list[AgentChatMessage] = []
+    if ultron_leads:
+        ultron_message = _ultron_turn(
+            session=session,
+            user_message=chat_request.message,
+            leads=True,
+        )
+        if ultron_message is not None:
+            agent_messages.append(ultron_message)
+            _emit_agent_message(ultron_message)
+            context_parts.append(
+                "CURRENT ULTRON RESPONSE\n\n"
+                f"ULTRON: {ultron_message.content}\n\n"
+                "The user addressed Ultron. Join only if you can materially help; otherwise "
+                "return exactly [[SILENT]]."
+            )
     system_prompt = "\n\n".join(context_parts)
 
+    if _stream_was_cancelled():
+        if agent_messages:
+            _record_conversation_turn(session, chat_request.message, agent_messages)
+        return ChatResponse(
+            response="Response cancelled by the operator.",
+            provider="chief-system",
+            model="cancelled",
+            session_id=session.id,
+            status="cancelled",
+            messages=agent_messages,
+        )
+
+    _emit_stream_event(
+        {"type": "status", "speaker": "CHIEF", "state": "thinking", "message": "CHIEF is thinking."}
+    )
     try:
         result = generate_model(
             prompt=chat_request.message,
@@ -1317,21 +1744,156 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
         )
     except RuntimeError as exc:
         response_text = str(exc)
-        session.add_message("user", chat_request.message)
-        session.add_message("assistant", response_text)
+        unavailable_message = AgentChatMessage(
+            speaker="CHIEF",
+            content=response_text,
+            provider="chief-system",
+            model="unavailable",
+        )
+        agent_messages.append(unavailable_message)
+        _emit_agent_message(unavailable_message)
+        _record_conversation_turn(session, chat_request.message, agent_messages)
         return ChatResponse(
             response=response_text,
             provider="chief-system",
             model="unavailable",
             session_id=session.id,
             status="unavailable",
+            messages=agent_messages,
         )
 
-    session.add_message("user", chat_request.message)
-    session.add_message("assistant", result.content)
+    if _stream_was_cancelled():
+        return ChatResponse(
+            response="Response cancelled by the operator.",
+            provider="chief-system",
+            model="cancelled",
+            session_id=session.id,
+            status="cancelled",
+            messages=agent_messages,
+        )
+
+    chief_content = _visible_model_content(result.content)
+    if chief_content is not None:
+        chief_content = _speaker_contribution(
+            chief_content,
+            speaker="CHIEF",
+            other_speaker="ULTRON",
+        )
+    if chief_content is not None:
+        chief_message = AgentChatMessage(
+            speaker="CHIEF",
+            content=chief_content,
+            provider=result.provider,
+            model=result.model,
+        )
+        agent_messages.append(chief_message)
+        _emit_agent_message(chief_message)
+
+    if not ultron_leads:
+        ultron_message = _ultron_turn(
+            session=session,
+            user_message=chat_request.message,
+            chief_message=chief_content,
+        )
+        if ultron_message is not None:
+            agent_messages.append(ultron_message)
+            _emit_agent_message(ultron_message)
+
+    if not agent_messages:
+        fallback = AgentChatMessage(
+            speaker="CHIEF",
+            content="No response was produced.",
+            provider="chief-system",
+            model="deterministic",
+        )
+        agent_messages.append(fallback)
+        _emit_agent_message(fallback)
+
+    _record_conversation_turn(session, chat_request.message, agent_messages)
+    combined_response = (
+        agent_messages[0].content
+        if len(agent_messages) == 1
+        else "\n\n".join(f"{message.speaker}: {message.content}" for message in agent_messages)
+    )
     return ChatResponse(
-        response=result.content,
+        response=combined_response,
         provider=result.provider,
         model=result.model,
         session_id=session.id,
+        messages=agent_messages,
+    )
+
+
+async def _stream_chat_events(
+    chat_request: ChatRequest,
+    request: Request,
+    session_id: UUID,
+) -> AsyncIterator[bytes]:
+    """Bridge the synchronous local model calls into incremental JSON Lines events."""
+
+    events: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+    cancellation = threading.Event()
+    event_loop = asyncio.get_running_loop()
+
+    def publish(event: dict[str, Any]) -> None:
+        event_loop.call_soon_threadsafe(events.put_nowait, event)
+
+    def run_chat() -> None:
+        token = _chat_stream_callback.set(publish)
+        cancellation_token = _chat_stream_cancelled.set(cancellation)
+        try:
+            response = chat(chat_request, request)
+        except Exception:  # pragma: no cover - defensive stream boundary
+            logger.exception("chat_stream_failed")
+            publish({"type": "error", "message": "CHIEF could not complete the response stream."})
+        else:
+            publish(
+                {
+                    "type": "complete",
+                    "response": response.model_dump(mode="json", exclude={"messages"}),
+                }
+            )
+        finally:
+            _chat_stream_callback.reset(token)
+            _chat_stream_cancelled.reset(cancellation_token)
+            event_loop.call_soon_threadsafe(events.put_nowait, None)
+
+    yield (json.dumps({"type": "start", "session_id": str(session_id)}) + "\n").encode()
+    producer = asyncio.create_task(asyncio.to_thread(run_chat))
+    try:
+        while True:
+            if await request.is_disconnected():
+                break
+            try:
+                event = await asyncio.wait_for(events.get(), timeout=0.25)
+            except TimeoutError:
+                continue
+            if event is None:
+                break
+            yield (json.dumps(event, separators=(",", ":")) + "\n").encode()
+    finally:
+        cancellation.set()
+        if producer.done() and not producer.cancelled():
+            producer.result()
+
+
+@app.post("/chat/stream", response_class=StreamingResponse)
+def stream_chat(chat_request: ChatRequest, request: Request) -> StreamingResponse:
+    """Stream attributed CHIEF and Ultron contributions as each becomes available."""
+
+    try:
+        session = session_store.get_or_create(
+            chat_request.session_id,
+            owner_id=request.state.actor_id,
+        )
+    except KeyError:
+        session = session_store.create(request.state.actor_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    normalized_request = chat_request.model_copy(update={"session_id": session.id})
+    return StreamingResponse(
+        _stream_chat_events(normalized_request, request, session.id),
+        media_type="application/x-ndjson",
+        headers={"X-Accel-Buffering": "no"},
     )

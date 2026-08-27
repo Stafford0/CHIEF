@@ -1,8 +1,25 @@
 import json
+import re
 import time
 from urllib import error, request
 
 from chief.models.base import ModelCapabilities, ModelPrivacy, ModelProvider, ModelResponse
+
+_THINK_BLOCK = re.compile(r"<think>.*?</think>\s*", flags=re.IGNORECASE | re.DOTALL)
+
+
+def visible_response(content: str) -> str:
+    """Return only user-visible model output, never a serialized reasoning trace."""
+
+    cleaned = _THINK_BLOCK.sub("", content)
+    lowered = cleaned.casefold()
+    if "</think>" in lowered:
+        closing_index = lowered.rfind("</think>") + len("</think>")
+        cleaned = cleaned[closing_index:]
+        lowered = cleaned.casefold()
+    if "<think>" in lowered:
+        cleaned = cleaned[: lowered.find("<think>")]
+    return cleaned.strip()
 
 
 class OllamaProvider(ModelProvider):
@@ -47,6 +64,9 @@ class OllamaProvider(ModelProvider):
             "model": self.model,
             "prompt": prompt,
             "stream": False,
+            # Keep reasoning-capable models from returning an empty visible response after
+            # placing their entire token budget in Ollama's separate thinking field.
+            "think": False,
         }
 
         if system_prompt:
@@ -94,8 +114,32 @@ class OllamaProvider(ModelProvider):
             raise TypeError("Ollama returned an invalid response.")
 
         return ModelResponse(
-            content=content.strip(),
+            content=visible_response(content),
             provider=self.name,
             model=self.model,
             latency_ms=(time.perf_counter() - started) * 1000,
         )
+
+    def available_models(self) -> set[str]:
+        """Return the locally installed Ollama model names."""
+
+        http_request = request.Request(f"{self.base_url}/api/tags", method="GET")
+        try:
+            with request.urlopen(http_request, timeout=min(self.timeout, 5.0)) as response:
+                raw = response.read(self.max_response_bytes + 1)
+                if len(raw) > self.max_response_bytes:
+                    raise RuntimeError("Ollama model inventory exceeded the size limit.")
+                data = json.loads(raw.decode("utf-8"))
+        except (TimeoutError, error.HTTPError, error.URLError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Ollama model inventory is unavailable.") from exc
+
+        models = data.get("models")
+        if not isinstance(models, list):
+            raise TypeError("Ollama returned an invalid model inventory.")
+        return {
+            name
+            for item in models
+            if isinstance(item, dict)
+            for name in (item.get("name"), item.get("model"))
+            if isinstance(name, str) and name
+        }

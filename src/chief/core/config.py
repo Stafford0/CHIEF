@@ -34,6 +34,8 @@ class Settings:
     environment: str = "development"
     ollama_url: str = "http://127.0.0.1:11434"
     ollama_model: str = "qwen3:4b"
+    ultron_ollama_model: str = "llama3.1:8b"
+    ultron_enabled: bool = True
     model_timeout_seconds: int = 120
     max_model_response_bytes: int = 2_000_000
     cors_origins: tuple[str, ...] = ("http://127.0.0.1:5173", "http://localhost:5173")
@@ -64,6 +66,11 @@ class Settings:
             environment=os.getenv("CHIEF_ENVIRONMENT", "development"),
             ollama_url=os.getenv("CHIEF_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/"),
             ollama_model=os.getenv("CHIEF_OLLAMA_MODEL", "qwen3:4b"),
+            ultron_ollama_model=os.getenv(
+                "CHIEF_ULTRON_OLLAMA_MODEL",
+                "llama3.1:8b",
+            ),
+            ultron_enabled=_bool_env("CHIEF_ULTRON_ENABLED", True),
             model_timeout_seconds=_int_env(
                 "CHIEF_MODEL_TIMEOUT_SECONDS", 120, minimum=1, maximum=600
             ),

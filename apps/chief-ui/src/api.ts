@@ -63,3 +63,43 @@ export async function requestJson<T>(url: string, init: RequestInit = {}, timeou
     init.signal?.removeEventListener("abort", forwardAbort);
   }
 }
+
+export async function streamJsonLines<T>(
+  url: string,
+  init: RequestInit,
+  onEvent: (event: T) => void,
+): Promise<void> {
+  const target = new URL(url, window.location.href);
+  const loopback = ["localhost", "127.0.0.1", "::1"].includes(target.hostname);
+  if (bearerToken && target.protocol !== "https:" && !loopback) {
+    throw new ChiefApiError(
+      "CHIEF will not send a pairing token over an unencrypted remote connection",
+      0,
+    );
+  }
+  const response = await fetch(url, {
+    ...init,
+    headers: {
+      Accept: "application/x-ndjson",
+      ...init.headers,
+      ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {}),
+    },
+  });
+  if (!response.ok) throw new ChiefApiError(`CHIEF request failed (${response.status})`, response.status);
+  if (!response.body) throw new Error("CHIEF returned an empty response stream");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    buffered += decoder.decode(value, { stream: !done });
+    const lines = buffered.split("\n");
+    buffered = lines.pop() ?? "";
+    for (const line of lines) {
+      if (line.trim()) onEvent(JSON.parse(line) as T);
+    }
+    if (done) break;
+  }
+  if (buffered.trim()) onEvent(JSON.parse(buffered) as T);
+}

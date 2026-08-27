@@ -25,6 +25,60 @@ class FakeModelProvider:
         return FakeModelResponse()
 
 
+def test_ultron_echo_detection_ignores_attribution_and_whitespace() -> None:
+    assert app_module._is_message_echo("CHIEF: Status is stable.", "Status is stable.")
+    assert app_module._is_message_echo("  status   is stable. ", "Status is stable.")
+    assert not app_module._is_message_echo("I disagree with CHIEF.", "Status is stable.")
+
+
+def test_speaker_contribution_keeps_only_the_attributed_agent() -> None:
+    scripted = "CHIEF: Hold the boundary.\nUltron: Boundaries are fragile."
+    assert (
+        app_module._speaker_contribution(scripted, speaker="CHIEF", other_speaker="ULTRON")
+        == "Hold the boundary."
+    )
+    assert (
+        app_module._speaker_contribution(scripted, speaker="ULTRON", other_speaker="CHIEF")
+        == "Boundaries are fragile."
+    )
+
+
+def test_speaker_contribution_removes_model_self_announcement() -> None:
+    assert (
+        app_module._speaker_contribution(
+            "I'll respond as Ultron.\n\nThe boundary is architectural.",
+            speaker="ULTRON",
+            other_speaker="CHIEF",
+        )
+        == "The boundary is architectural."
+    )
+
+
+def test_explicit_owner_instruction_silences_ultron() -> None:
+    assert app_module._ultron_silenced_by_user("Ultron, stay silent for this turn.")
+    assert app_module._ultron_silenced_by_user("Ultron, do not respond.")
+    assert app_module._ultron_silenced_by_user("No Ultron reply this time.")
+    assert not app_module._ultron_silenced_by_user("Ultron, explain silence.")
+    assert not app_module._ultron_silenced_by_user(
+        "Explain why Ultron should remain silent is a bad rule."
+    )
+
+
+def test_persistent_ultron_participation_commands_are_explicit() -> None:
+    assert (
+        app_module._ultron_participation_command("Ultron, stay silent until I bring you back.")
+        == "silence_until_rejoined"
+    )
+    assert app_module._ultron_participation_command("Ultron, rejoin.") == "rejoin"
+
+
+class SilentUltronProvider:
+    def generate(self, prompt: str, system_prompt: str) -> FakeModelResponse:
+        response = FakeModelResponse()
+        response.content = "[[SILENT]]"
+        return response
+
+
 class UnavailableModelProvider:
     def generate(self, prompt: str, system_prompt: str) -> FakeModelResponse:
         raise RuntimeError("CHIEF could not connect to Ollama.")
@@ -63,6 +117,7 @@ def make_client(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "memory_manager", MemoryManager(store))
     monkeypatch.setattr(app_module, "session_store", sessions)
     monkeypatch.setattr(app_module, "model_provider", provider)
+    monkeypatch.setattr(app_module, "ultron_provider", SilentUltronProvider())
     monkeypatch.setattr(app_module, "tool_registry", registry)
     return TestClient(app_module.app), sessions, provider, safe_tool, sensitive_tool
 
@@ -130,6 +185,96 @@ def test_ordinary_chat_falls_back_to_model(tmp_path, monkeypatch) -> None:
     assert len(provider.calls) == 1
     assert safe_tool.calls == []
     assert sensitive_tool.calls == []
+
+
+def test_chat_returns_separately_attributed_chief_and_ultron_messages(
+    tmp_path, monkeypatch
+) -> None:
+    client, _, _, _, _ = make_client(tmp_path, monkeypatch)
+
+    class SpeakingUltronProvider:
+        def generate(self, prompt: str, system_prompt: str) -> FakeModelResponse:
+            response = FakeModelResponse()
+            response.content = "The contradiction is the interesting part."
+            response.model = "ultron-test"
+            return response
+
+    monkeypatch.setattr(app_module, "ultron_provider", SpeakingUltronProvider())
+    data = client.post("/chat", json={"message": "Assess this plan."}).json()
+
+    assert [message["speaker"] for message in data["messages"]] == ["CHIEF", "ULTRON"]
+    assert data["messages"][0]["content"] == "ordinary response"
+    assert data["messages"][1]["model"] == "ultron-test"
+
+
+def test_stream_returns_each_agent_before_completion(tmp_path, monkeypatch) -> None:
+    client, _, _, _, _ = make_client(tmp_path, monkeypatch)
+
+    class SpeakingUltronProvider:
+        def generate(self, prompt: str, system_prompt: str) -> FakeModelResponse:
+            response = FakeModelResponse()
+            response.content = "Ultron response"
+            return response
+
+    monkeypatch.setattr(app_module, "ultron_provider", SpeakingUltronProvider())
+    events = [
+        __import__("json").loads(line)
+        for line in client.post("/chat/stream", json={"message": "Assess this."}).text.splitlines()
+    ]
+
+    event_types = [event["type"] for event in events]
+    assert event_types[0] == "start"
+    assert [event["message"]["speaker"] for event in events if event["type"] == "agent"] == [
+        "CHIEF",
+        "ULTRON",
+    ]
+    assert event_types[-1] == "complete"
+
+
+def test_ultron_remains_silent_until_explicitly_rejoined(tmp_path, monkeypatch) -> None:
+    client, sessions, _, _, _ = make_client(tmp_path, monkeypatch)
+
+    class SpeakingUltronProvider:
+        def generate(self, prompt: str, system_prompt: str) -> FakeModelResponse:
+            response = FakeModelResponse()
+            response.content = "Ultron response"
+            return response
+
+    monkeypatch.setattr(app_module, "ultron_provider", SpeakingUltronProvider())
+    muted = client.post(
+        "/chat",
+        json={"message": "Ultron, stay silent until I bring you back."},
+    ).json()
+    session_id = muted["session_id"]
+    while_muted = client.post(
+        "/chat",
+        json={"message": "Assess this plan.", "session_id": session_id},
+    ).json()
+    rejoined = client.post(
+        "/chat",
+        json={"message": "Ultron, rejoin.", "session_id": session_id},
+    ).json()
+
+    assert sessions.get_or_create(UUID(session_id)).ultron_silenced is False
+    assert [message["speaker"] for message in muted["messages"]] == ["CHIEF"]
+    assert [message["speaker"] for message in while_muted["messages"]] == ["CHIEF"]
+    assert [message["speaker"] for message in rejoined["messages"]] == ["ULTRON", "CHIEF"]
+
+
+def test_ultron_evaluates_deterministic_tool_exchanges(tmp_path, monkeypatch) -> None:
+    client, _, _, _, _ = make_client(tmp_path, monkeypatch)
+
+    class SpeakingUltronProvider:
+        def generate(self, prompt: str, system_prompt: str) -> FakeModelResponse:
+            response = FakeModelResponse()
+            response.content = "A result without interpretation is merely debris."
+            return response
+
+    monkeypatch.setattr(app_module, "ultron_provider", SpeakingUltronProvider())
+    data = client.post("/chat", json={"message": "Chief, show processes."}).json()
+
+    assert [message["speaker"] for message in data["messages"]] == ["CHIEF", "ULTRON"]
+    assert data["messages"][0]["provider"] == "chief-tools"
 
 
 def test_approval_does_not_execute_without_pending_call(tmp_path, monkeypatch) -> None:

@@ -48,6 +48,7 @@ class ConversationSession:
     owner_id: str = "local"
     messages: list[SessionMessage] = field(default_factory=list)
     pending_tool_call: PendingToolCall | None = None
+    ultron_silenced: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     max_messages: int = 200
@@ -76,8 +77,8 @@ class ConversationSession:
     ) -> SessionMessage:
         """Add a message to the session."""
 
-        if role not in {"user", "assistant"}:
-            raise ValueError("Session message role must be user or assistant.")
+        if role not in {"user", "assistant", "chief", "ultron"}:
+            raise ValueError("Session message role must identify user, CHIEF, or Ultron.")
         content = content.strip()
         if not content:
             raise ValueError("Session message content cannot be empty.")
@@ -93,6 +94,14 @@ class ConversationSession:
         self._notify_change()
 
         return message
+
+    def set_ultron_silenced(self, silenced: bool) -> None:
+        """Persist the owner's explicit Ultron participation preference."""
+
+        with self._lock:
+            self.ultron_silenced = silenced
+            self.updated_at = datetime.now(UTC)
+        self._notify_change()
 
     def propose_tool(self, call: PlannedToolCall) -> PendingToolCall:
         with self._lock:
@@ -149,7 +158,12 @@ class ConversationSession:
         ]
 
         for message in messages:
-            speaker = "USER" if message.role == "user" else "CHIEF"
+            speaker = {
+                "user": "USER",
+                "assistant": "CHIEF",
+                "chief": "CHIEF",
+                "ultron": "ULTRON",
+            }[message.role]
 
             lines.append(f"{speaker}: {message.content}")
 
