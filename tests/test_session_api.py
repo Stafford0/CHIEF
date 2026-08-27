@@ -32,6 +32,11 @@ class FakeModelProvider:
         return FakeModelResponse("Test response")
 
 
+class SilentUltronProvider:
+    def generate(self, prompt: str, system_prompt: str) -> FakeModelResponse:
+        return FakeModelResponse("[[SILENT]]")
+
+
 def make_client(tmp_path, monkeypatch):
     store = SQLiteMemoryStore(tmp_path / "test_chief.db")
     memory_manager = MemoryManager(store)
@@ -60,6 +65,12 @@ def make_client(tmp_path, monkeypatch):
         app_module,
         "model_provider",
         model_provider,
+    )
+
+    monkeypatch.setattr(
+        app_module,
+        "ultron_provider",
+        SilentUltronProvider(),
     )
 
     return (
@@ -202,3 +213,25 @@ def test_long_term_memory_available_in_new_session(
 
     assert "BLUE-731" in call["system_prompt"]
     assert "RELEVANT CHIEF MEMORY" in call["system_prompt"]
+
+
+def test_direct_ultron_turn_leads_without_receiving_chief_memory(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    client, _, memory_manager, _ = make_client(tmp_path, monkeypatch)
+    calls: list[dict[str, str]] = []
+
+    class RecordingUltronProvider:
+        def generate(self, prompt: str, system_prompt: str) -> FakeModelResponse:
+            calls.append({"prompt": prompt, "system_prompt": system_prompt})
+            return FakeModelResponse("A direct Ultron response")
+
+    memory_manager.remember("Private CHIEF memory marker BLUE-731.", importance=1.0)
+    monkeypatch.setattr(app_module, "ultron_provider", RecordingUltronProvider())
+
+    data = client.post("/chat", json={"message": "Ultron, assess Project BLUE-731."}).json()
+
+    assert [message["speaker"] for message in data["messages"]] == ["ULTRON", "CHIEF"]
+    assert "RELEVANT CHIEF MEMORY" not in calls[0]["system_prompt"]
+    assert "Private CHIEF memory marker" not in calls[0]["system_prompt"]

@@ -14,8 +14,9 @@ import { useBrowserVoice, type BrowserVoiceControls } from "./useBrowserVoice";
 
 type Health = { status: string; system: string; version: string };
 type SystemInfo = { name: string; full_name: string; version: string; milestone: string; environment: string };
-type ChatMessage = { role: "user" | "assistant"; content: string };
-type ChatResponse = { response: string; provider: string; model: string; session_id: string };
+type ChatMessage = { role: "user" | "chief" | "ultron"; content: string };
+type AgentChatMessage = { speaker: "CHIEF" | "ULTRON"; content: string; provider: string; model: string };
+type ChatResponse = { response: string; provider: string; model: string; session_id: string; messages?: AgentChatMessage[] };
 type PortfolioSummary = {
   owner_id: string;
   businesses: number;
@@ -99,7 +100,7 @@ function App() {
     return requested === "chat" || requested === "portfolio" ? requested : "overview";
   });
   const [clock, setClock] = useState(new Date());
-  const [messages, setMessages] = useState<ChatMessage[]>([{ role: "assistant", content: "CHIEF command interface online. Awaiting directive." }]);
+  const [messages, setMessages] = useState<ChatMessage[]>([{ role: "chief", content: "CHIEF command interface online. Awaiting directive." }]);
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(() => sessionStorage.getItem("chief.session"));
   const [busy, setBusy] = useState(false);
@@ -232,11 +233,14 @@ function App() {
     try {
       chatAbort.current = new AbortController();
       const data = await requestJson<ChatResponse>(`${API_BASE}/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, session_id: sessionId }), signal: chatAbort.current.signal }, 130000);
-      setSessionId(data.session_id); sessionStorage.setItem("chief.session", data.session_id); setMessages((m) => [...m, { role: "assistant", content: data.response }]); setApiError(null); void loadTelemetry();
-      voice.speak(data.response);
+      const replies: ChatMessage[] = data.messages?.length
+        ? data.messages.map((reply) => ({ role: reply.speaker === "ULTRON" ? "ultron" : "chief", content: reply.content }))
+        : [{ role: "chief", content: data.response }];
+      setSessionId(data.session_id); sessionStorage.setItem("chief.session", data.session_id); setMessages((m) => [...m, ...replies]); setApiError(null); void loadTelemetry();
+      voice.speak(replies.map((reply) => `${reply.role === "ultron" ? "Ultron" : "Chief"}. ${reply.content}`).join(" "));
     } catch (error) {
       setApiError(error instanceof Error ? error.message : "Chat failed");
-      setMessages((m) => [...m, { role: "assistant", content: "Unable to reach CHIEF core. Check the API connection." }]);
+      setMessages((m) => [...m, { role: "chief", content: "Unable to reach CHIEF core. Check the API connection." }]);
     } finally { setBusy(false); chatAbort.current = null; }
   }
 
@@ -466,7 +470,7 @@ function ChatPanel({messages,input,setInput,sendMessage,busy,voice,appInstalled,
   const audioActive = voice.listening || voice.speaking;
   return <section className="chat-panel hud-frame">
     <div className="c2-map-head"><div><span className="eyebrow">DIRECT CHANNEL</span><h2>CHIEF COMMAND INTERFACE</h2></div><div className="live-badge"><i/> {busy?"PROCESSING":voice.listening?"LISTENING":voice.speaking?"SPEAKING":"READY"}</div></div>
-    <div className="chat-stream">{messages.map((m,i)=><article key={i} className={`message ${m.role}`}><div className="message-tag">{m.role==="assistant"?"CHIEF":"OPERATOR"}</div><p>{m.content}</p></article>)}</div>
+    <div className="chat-stream">{messages.map((m,i)=><article key={i} className={`message ${m.role}`}><div className="message-tag">{m.role==="user"?"OPERATOR":m.role.toUpperCase()}</div><p>{m.content}</p></article>)}</div>
     <div className={`voice-console ${audioActive ? "active" : ""}`}>
       <div className="voice-actions">
         <button type="button" className={voice.listening ? "voice-button listening" : "voice-button"} onClick={()=>voice.toggleListening(input)} disabled={!voice.inputAvailable || (busy && !voice.listening)} aria-pressed={voice.listening}>

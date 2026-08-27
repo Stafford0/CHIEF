@@ -468,8 +468,11 @@ nav { display: grid; gap: 1px; }
 .chat-stream { min-height: 0; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 12px; background: radial-gradient(circle at 50% 45%,rgba(14,120,118,.05),transparent 45%); }
 .message { max-width: 82%; padding: 9px 11px; border-left: 2px solid var(--line-hot); background: rgba(4,13,16,.78); }
 .message.user { align-self: flex-end; border-left: 0; border-right: 2px solid var(--amber); background: rgba(72,47,12,.13); }
+.message.chief { border-left-color: var(--teal); }
+.message.ultron { border-left-color: var(--red); background: rgba(104,20,20,.13); }
 .message-tag { margin-bottom: 5px; color: var(--teal); font-size: 7px; letter-spacing: .18em; }
 .message.user .message-tag { color: var(--amber); text-align: right; }
+.message.ultron .message-tag { color: var(--red); }
 .message p { margin: 0; color: #bdcccd; font-size: 11px; line-height: 1.55; white-space: pre-wrap; }
 .typing { color: var(--teal) !important; animation: flicker 1s infinite alternate; }
 .command-input { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-top: 1px solid var(--line); color: var(--teal); background: #051013; }

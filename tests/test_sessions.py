@@ -27,7 +27,7 @@ def test_session_rejects_invalid_role() -> None:
 
     with pytest.raises(
         ValueError,
-        match="Session message role must be user or assistant.",
+        match="Session message role must identify user, CHIEF, or Ultron.",
     ):
         session.add_message(
             "system",

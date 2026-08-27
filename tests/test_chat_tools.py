@@ -25,6 +25,13 @@ class FakeModelProvider:
         return FakeModelResponse()
 
 
+class SilentUltronProvider:
+    def generate(self, prompt: str, system_prompt: str) -> FakeModelResponse:
+        response = FakeModelResponse()
+        response.content = "[[SILENT]]"
+        return response
+
+
 class UnavailableModelProvider:
     def generate(self, prompt: str, system_prompt: str) -> FakeModelResponse:
         raise RuntimeError("CHIEF could not connect to Ollama.")
@@ -63,6 +70,7 @@ def make_client(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "memory_manager", MemoryManager(store))
     monkeypatch.setattr(app_module, "session_store", sessions)
     monkeypatch.setattr(app_module, "model_provider", provider)
+    monkeypatch.setattr(app_module, "ultron_provider", SilentUltronProvider())
     monkeypatch.setattr(app_module, "tool_registry", registry)
     return TestClient(app_module.app), sessions, provider, safe_tool, sensitive_tool
 
@@ -130,6 +138,42 @@ def test_ordinary_chat_falls_back_to_model(tmp_path, monkeypatch) -> None:
     assert len(provider.calls) == 1
     assert safe_tool.calls == []
     assert sensitive_tool.calls == []
+
+
+def test_chat_returns_separately_attributed_chief_and_ultron_messages(
+    tmp_path, monkeypatch
+) -> None:
+    client, _, _, _, _ = make_client(tmp_path, monkeypatch)
+
+    class SpeakingUltronProvider:
+        def generate(self, prompt: str, system_prompt: str) -> FakeModelResponse:
+            response = FakeModelResponse()
+            response.content = "The contradiction is the interesting part."
+            response.model = "ultron-test"
+            return response
+
+    monkeypatch.setattr(app_module, "ultron_provider", SpeakingUltronProvider())
+    data = client.post("/chat", json={"message": "Assess this plan."}).json()
+
+    assert [message["speaker"] for message in data["messages"]] == ["CHIEF", "ULTRON"]
+    assert data["messages"][0]["content"] == "ordinary response"
+    assert data["messages"][1]["model"] == "ultron-test"
+
+
+def test_ultron_evaluates_deterministic_tool_exchanges(tmp_path, monkeypatch) -> None:
+    client, _, _, _, _ = make_client(tmp_path, monkeypatch)
+
+    class SpeakingUltronProvider:
+        def generate(self, prompt: str, system_prompt: str) -> FakeModelResponse:
+            response = FakeModelResponse()
+            response.content = "A result without interpretation is merely debris."
+            return response
+
+    monkeypatch.setattr(app_module, "ultron_provider", SpeakingUltronProvider())
+    data = client.post("/chat", json={"message": "Chief, show processes."}).json()
+
+    assert [message["speaker"] for message in data["messages"]] == ["CHIEF", "ULTRON"]
+    assert data["messages"][0]["provider"] == "chief-tools"
 
 
 def test_approval_does_not_execute_without_pending_call(tmp_path, monkeypatch) -> None:

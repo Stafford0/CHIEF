@@ -76,8 +76,8 @@ class ConversationSession:
     ) -> SessionMessage:
         """Add a message to the session."""
 
-        if role not in {"user", "assistant"}:
-            raise ValueError("Session message role must be user or assistant.")
+        if role not in {"user", "assistant", "chief", "ultron"}:
+            raise ValueError("Session message role must identify user, CHIEF, or Ultron.")
         content = content.strip()
         if not content:
             raise ValueError("Session message content cannot be empty.")
@@ -149,7 +149,12 @@ class ConversationSession:
         ]
 
         for message in messages:
-            speaker = "USER" if message.role == "user" else "CHIEF"
+            speaker = {
+                "user": "USER",
+                "assistant": "CHIEF",
+                "chief": "CHIEF",
+                "ultron": "ULTRON",
+            }[message.role]
 
             lines.append(f"{speaker}: {message.content}")
 

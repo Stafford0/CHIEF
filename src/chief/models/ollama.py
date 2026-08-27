@@ -47,6 +47,9 @@ class OllamaProvider(ModelProvider):
             "model": self.model,
             "prompt": prompt,
             "stream": False,
+            # Keep reasoning-capable models from returning an empty visible response after
+            # placing their entire token budget in Ollama's separate thinking field.
+            "think": False,
         }
 
         if system_prompt:

@@ -1,5 +1,9 @@
 # CHIEF
 
+CHIEF is the primary operator in a single attributed conversation UI. Ultron is a separate
+local Ollama conversational voice that may participate but has no tools or access to CHIEF's
+private memory. See [the conversation architecture](docs/architecture/chief-ultron-conversation.md).
+
 **Cognitive Hub for Intelligence, Execution & Foresight**
 
 CHIEF is a local-first, provider-independent AI co-founder foundation. It combines durable

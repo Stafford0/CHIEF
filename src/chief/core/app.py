@@ -46,6 +46,7 @@ from chief.memory.sqlite import SQLiteMemoryStore
 from chief.models.ollama import OllamaProvider
 from chief.models.router import ModelRouter
 from chief.notifications import AttentionPolicy, NotificationStore
+from chief.personas import CHIEF_PERSONA, ULTRON_PERSONA
 from chief.portfolio import SQLitePortfolioStore
 from chief.runs import (
     ActionResult,
@@ -233,6 +234,12 @@ model_provider = OllamaProvider(
     max_response_bytes=settings.max_model_response_bytes,
 )
 model_router = ModelRouter([model_provider])
+ultron_provider = OllamaProvider(
+    model=settings.ultron_ollama_model,
+    base_url=settings.ollama_url,
+    timeout=settings.model_timeout_seconds,
+    max_response_bytes=settings.max_model_response_bytes,
+)
 
 
 def generate_model(prompt: str, system_prompt: str):
@@ -241,6 +248,12 @@ def generate_model(prompt: str, system_prompt: str):
     if model_provider not in router.providers:
         router = ModelRouter([model_provider])
     return router.generate(prompt, system_prompt)
+
+
+def generate_ultron_model(prompt: str, system_prompt: str):
+    """Use Ultron's dedicated local model without exposing CHIEF's tool router."""
+
+    return ModelRouter([ultron_provider]).generate(prompt, system_prompt)
 
 
 memory_store = SQLiteMemoryStore()
@@ -403,6 +416,13 @@ class ChatRequest(BaseModel):
     session_id: UUID | None = None
 
 
+class AgentChatMessage(BaseModel):
+    speaker: str
+    content: str
+    provider: str
+    model: str
+
+
 class ChatResponse(BaseModel):
     response: str
     provider: str
@@ -411,6 +431,7 @@ class ChatResponse(BaseModel):
     status: str = "completed"
     pending_action: str | None = None
     tool_description: str | None = None
+    messages: list[AgentChatMessage] = Field(default_factory=list)
 
 
 class ToolDefinitionResponse(BaseModel):
@@ -1055,6 +1076,99 @@ def execute_plan(plan: ExecutionPlan, request: Request) -> PlanOutcome:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+def _addressed_to_ultron(message: str) -> bool:
+    return re.match(r"^\s*(?:hey[\s,]+)?ultron\b", message, flags=re.IGNORECASE) is not None
+
+
+def _visible_model_content(content: str) -> str | None:
+    cleaned = content.strip()
+    if not cleaned or cleaned == "[[SILENT]]":
+        return None
+    return cleaned
+
+
+def _ultron_turn(
+    *,
+    session,
+    user_message: str,
+    chief_message: str | None = None,
+    leads: bool = False,
+) -> AgentChatMessage | None:
+    if not settings.ultron_enabled:
+        return None
+
+    context_parts = [ULTRON_PERSONA]
+    conversation_context = session.build_context()
+    if conversation_context:
+        context_parts.append(conversation_context)
+    if chief_message:
+        context_parts.append(
+            "CURRENT CHIEF RESPONSE\n\n"
+            f"CHIEF: {chief_message}\n\n"
+            "Decide whether you have something worthwhile to add to this exchange."
+        )
+    elif leads:
+        context_parts.append("The user addressed you directly. Lead this exchange and answer them.")
+
+    try:
+        result = generate_ultron_model(
+            prompt=user_message,
+            system_prompt="\n\n".join(context_parts),
+        )
+    except RuntimeError:
+        logger.exception("ultron_model_unavailable")
+        return None
+
+    content = _visible_model_content(result.content)
+    if content is None:
+        return None
+    return AgentChatMessage(
+        speaker="ULTRON",
+        content=content,
+        provider=result.provider,
+        model=result.model,
+    )
+
+
+def _record_conversation_turn(
+    session,
+    user_message: str,
+    messages: list[AgentChatMessage],
+) -> None:
+    session.add_message("user", user_message)
+    for message in messages:
+        session.add_message(message.speaker.casefold(), message.content)
+
+
+def _deterministic_messages(
+    *,
+    session,
+    user_message: str,
+    chief_message: str,
+    provider: str,
+    model: str = "deterministic",
+) -> list[AgentChatMessage]:
+    """Attribute a completed CHIEF system turn and let tool-free Ultron evaluate it."""
+
+    messages = [
+        AgentChatMessage(
+            speaker="CHIEF",
+            content=chief_message,
+            provider=provider,
+            model=model,
+        )
+    ]
+    ultron_message = _ultron_turn(
+        session=session,
+        user_message=user_message,
+        chief_message=chief_message,
+    )
+    if ultron_message is not None:
+        session.add_message("ultron", ultron_message.content)
+        messages.append(ultron_message)
+    return messages
+
+
 @app.post("/chat", response_model=ChatResponse)
 def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
     try:
@@ -1078,6 +1192,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
             model="deterministic",
             session_id=session.id,
             status="execution_paused",
+            messages=_deterministic_messages(
+                session=session,
+                user_message=chat_request.message,
+                chief_message=response_text,
+                provider="chief-system",
+            ),
         )
 
     pending = (
@@ -1133,6 +1253,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
             session_id=session.id,
             status=response_status,
             tool_description=pending_call.description,
+            messages=_deterministic_messages(
+                session=session,
+                user_message=chat_request.message,
+                chief_message=response_text,
+                provider="chief-tools",
+            ),
         )
 
     memory_command = memory_command_parser.parse(chat_request.message)
@@ -1154,6 +1280,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
             provider="chief-memory",
             model="deterministic",
             session_id=session.id,
+            messages=_deterministic_messages(
+                session=session,
+                user_message=chat_request.message,
+                chief_message=response_text,
+                provider="chief-memory",
+            ),
         )
 
     if isinstance(memory_command, CorrectMemoryCommand):
@@ -1171,6 +1303,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
                 provider="chief-memory",
                 model="deterministic",
                 session_id=session.id,
+                messages=_deterministic_messages(
+                    session=session,
+                    user_message=chat_request.message,
+                    chief_message=response_text,
+                    provider="chief-memory",
+                ),
             )
 
         if old_memory is None:
@@ -1185,6 +1323,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
                 provider="chief-memory",
                 model="deterministic",
                 session_id=session.id,
+                messages=_deterministic_messages(
+                    session=session,
+                    user_message=chat_request.message,
+                    chief_message=response_text,
+                    provider="chief-memory",
+                ),
             )
 
         new_memory = memory_manager.correct(
@@ -1203,6 +1347,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
             provider="chief-memory",
             model="deterministic",
             session_id=session.id,
+            messages=_deterministic_messages(
+                session=session,
+                user_message=chat_request.message,
+                chief_message=response_text,
+                provider="chief-memory",
+            ),
         )
 
     if isinstance(memory_command, ForgetMemoryCommand):
@@ -1220,6 +1370,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
                 provider="chief-memory",
                 model="deterministic",
                 session_id=session.id,
+                messages=_deterministic_messages(
+                    session=session,
+                    user_message=chat_request.message,
+                    chief_message=response_text,
+                    provider="chief-memory",
+                ),
             )
 
         if memory is None:
@@ -1234,6 +1390,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
                 provider="chief-memory",
                 model="deterministic",
                 session_id=session.id,
+                messages=_deterministic_messages(
+                    session=session,
+                    user_message=chat_request.message,
+                    chief_message=response_text,
+                    provider="chief-memory",
+                ),
             )
 
         memory_manager.forget(memory)
@@ -1246,6 +1408,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
             provider="chief-memory",
             model="deterministic",
             session_id=session.id,
+            messages=_deterministic_messages(
+                session=session,
+                user_message=chat_request.message,
+                chief_message=response_text,
+                provider="chief-memory",
+            ),
         )
 
     planned_call = tool_planner.plan(chat_request.message)
@@ -1261,6 +1429,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
                 session_id=session.id,
                 status="execution_paused",
                 tool_description=planned_call.description,
+                messages=_deterministic_messages(
+                    session=session,
+                    user_message=chat_request.message,
+                    chief_message=response_text,
+                    provider="chief-system",
+                ),
             )
         result = tool_registry.execute(
             planned_call.tool_name,
@@ -1299,15 +1473,38 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
             status=response_status,
             pending_action=("approve_or_cancel" if response_status == "pending_approval" else None),
             tool_description=planned_call.description,
+            messages=_deterministic_messages(
+                session=session,
+                user_message=chat_request.message,
+                chief_message=response_text,
+                provider="chief-tools",
+            ),
         )
 
     memory_context = memory_manager.build_context(chat_request.message)
     conversation_context = session.build_context()
-    context_parts = [SYSTEM_IDENTITY]
+    context_parts = [SYSTEM_IDENTITY, CHIEF_PERSONA]
     if memory_context:
         context_parts.append(memory_context)
     if conversation_context:
         context_parts.append(conversation_context)
+
+    ultron_leads = _addressed_to_ultron(chat_request.message)
+    agent_messages: list[AgentChatMessage] = []
+    if ultron_leads:
+        ultron_message = _ultron_turn(
+            session=session,
+            user_message=chat_request.message,
+            leads=True,
+        )
+        if ultron_message is not None:
+            agent_messages.append(ultron_message)
+            context_parts.append(
+                "CURRENT ULTRON RESPONSE\n\n"
+                f"ULTRON: {ultron_message.content}\n\n"
+                "The user addressed Ultron. Join only if you can materially help; otherwise "
+                "return exactly [[SILENT]]."
+            )
     system_prompt = "\n\n".join(context_parts)
 
     try:
@@ -1317,21 +1514,62 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
         )
     except RuntimeError as exc:
         response_text = str(exc)
-        session.add_message("user", chat_request.message)
-        session.add_message("assistant", response_text)
+        unavailable_message = AgentChatMessage(
+            speaker="CHIEF",
+            content=response_text,
+            provider="chief-system",
+            model="unavailable",
+        )
+        agent_messages.append(unavailable_message)
+        _record_conversation_turn(session, chat_request.message, agent_messages)
         return ChatResponse(
             response=response_text,
             provider="chief-system",
             model="unavailable",
             session_id=session.id,
             status="unavailable",
+            messages=agent_messages,
         )
 
-    session.add_message("user", chat_request.message)
-    session.add_message("assistant", result.content)
+    chief_content = _visible_model_content(result.content)
+    if chief_content is not None:
+        agent_messages.append(
+            AgentChatMessage(
+                speaker="CHIEF",
+                content=chief_content,
+                provider=result.provider,
+                model=result.model,
+            )
+        )
+
+    if not ultron_leads:
+        ultron_message = _ultron_turn(
+            session=session,
+            user_message=chat_request.message,
+            chief_message=chief_content,
+        )
+        if ultron_message is not None:
+            agent_messages.append(ultron_message)
+
+    if not agent_messages:
+        fallback = AgentChatMessage(
+            speaker="CHIEF",
+            content="No response was produced.",
+            provider="chief-system",
+            model="deterministic",
+        )
+        agent_messages.append(fallback)
+
+    _record_conversation_turn(session, chat_request.message, agent_messages)
+    combined_response = (
+        agent_messages[0].content
+        if len(agent_messages) == 1
+        else "\n\n".join(f"{message.speaker}: {message.content}" for message in agent_messages)
+    )
     return ChatResponse(
-        response=result.content,
+        response=combined_response,
         provider=result.provider,
         model=result.model,
         session_id=session.id,
+        messages=agent_messages,
     )
