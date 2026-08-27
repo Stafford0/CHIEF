@@ -25,6 +25,37 @@ class FakeModelProvider:
         return FakeModelResponse()
 
 
+def test_ultron_echo_detection_ignores_attribution_and_whitespace() -> None:
+    assert app_module._is_message_echo("CHIEF: Status is stable.", "Status is stable.")
+    assert app_module._is_message_echo("  status   is stable. ", "Status is stable.")
+    assert not app_module._is_message_echo("I disagree with CHIEF.", "Status is stable.")
+
+
+def test_speaker_contribution_keeps_only_the_attributed_agent() -> None:
+    scripted = "CHIEF: Hold the boundary.\nUltron: Boundaries are fragile."
+    assert app_module._speaker_contribution(
+        scripted, speaker="CHIEF", other_speaker="ULTRON"
+    ) == "Hold the boundary."
+    assert app_module._speaker_contribution(
+        scripted, speaker="ULTRON", other_speaker="CHIEF"
+    ) == "Boundaries are fragile."
+
+
+def test_speaker_contribution_removes_model_self_announcement() -> None:
+    assert app_module._speaker_contribution(
+        "I'll respond as Ultron.\n\nThe boundary is architectural.",
+        speaker="ULTRON",
+        other_speaker="CHIEF",
+    ) == "The boundary is architectural."
+
+
+def test_explicit_owner_instruction_silences_ultron() -> None:
+    assert app_module._ultron_silenced_by_user("Ultron should remain silent for this turn.")
+    assert app_module._ultron_silenced_by_user("Ultron, do not respond.")
+    assert app_module._ultron_silenced_by_user("No Ultron reply this time.")
+    assert not app_module._ultron_silenced_by_user("Ultron, explain silence.")
+
+
 class SilentUltronProvider:
     def generate(self, prompt: str, system_prompt: str) -> FakeModelResponse:
         response = FakeModelResponse()

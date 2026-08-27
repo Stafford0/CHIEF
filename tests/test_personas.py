@@ -5,7 +5,10 @@ from chief.personas import CHIEF_PERSONA, ULTRON_PERSONA, load_persona
 
 def test_versioned_personas_are_loaded() -> None:
     assert "primary operations partner" in CHIEF_PERSONA
+    assert "Author only CHIEF's contribution" in CHIEF_PERSONA
     assert "zero tool access" in ULTRON_PERSONA
+    assert "architectural permission boundary" in ULTRON_PERSONA
+    assert "Author only Ultron's contribution" in ULTRON_PERSONA
     assert "[[SILENT]]" in ULTRON_PERSONA
 
 

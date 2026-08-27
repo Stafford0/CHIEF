@@ -1,8 +1,25 @@
 import json
+import re
 import time
 from urllib import error, request
 
 from chief.models.base import ModelCapabilities, ModelPrivacy, ModelProvider, ModelResponse
+
+_THINK_BLOCK = re.compile(r"<think>.*?</think>\s*", flags=re.IGNORECASE | re.DOTALL)
+
+
+def visible_response(content: str) -> str:
+    """Return only user-visible model output, never a serialized reasoning trace."""
+
+    cleaned = _THINK_BLOCK.sub("", content)
+    lowered = cleaned.casefold()
+    if "</think>" in lowered:
+        closing_index = lowered.rfind("</think>") + len("</think>")
+        cleaned = cleaned[closing_index:]
+        lowered = cleaned.casefold()
+    if "<think>" in lowered:
+        cleaned = cleaned[: lowered.find("<think>")]
+    return cleaned.strip()
 
 
 class OllamaProvider(ModelProvider):
@@ -97,7 +114,7 @@ class OllamaProvider(ModelProvider):
             raise TypeError("Ollama returned an invalid response.")
 
         return ModelResponse(
-            content=content.strip(),
+            content=visible_response(content),
             provider=self.name,
             model=self.model,
             latency_ms=(time.perf_counter() - started) * 1000,

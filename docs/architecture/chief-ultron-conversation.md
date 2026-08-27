@@ -33,3 +33,6 @@ Benchmarked on August 27, 2026 against the locally installed models:
 With `qwen3:4b` and `llama3.1:8b` generating concurrently, Ultron completed in about 10.8
 seconds. This is acceptable for the initial local release and should be rechecked after any
 hardware, quantization, context-window, or Ollama configuration change.
+
+The full live-device acceptance record is in
+[`DEVICE_ACCEPTANCE_2026-08-27.md`](../DEVICE_ACCEPTANCE_2026-08-27.md).

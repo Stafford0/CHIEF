@@ -61,6 +61,18 @@ class DeterministicToolPlanner:
             arguments={"command": "Get-ComputerInfo"},
             description="show system information",
         ),
+        "check system status": PlannedToolCall(
+            intent="check_system_status",
+            tool_name="system_status",
+            arguments={},
+            description="check CHIEF and host system status",
+        ),
+        "show system status": PlannedToolCall(
+            intent="check_system_status",
+            tool_name="system_status",
+            arguments={},
+            description="check CHIEF and host system status",
+        ),
         "show the date": PlannedToolCall(
             intent="show_date",
             tool_name="powershell_read",

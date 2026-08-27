@@ -1080,11 +1080,57 @@ def _addressed_to_ultron(message: str) -> bool:
     return re.match(r"^\s*(?:hey[\s,]+)?ultron\b", message, flags=re.IGNORECASE) is not None
 
 
+def _ultron_silenced_by_user(message: str) -> bool:
+    """Honor an explicit owner instruction that Ultron not participate in this turn."""
+
+    patterns = (
+        r"\bultron\b.{0,60}\b(?:remain|stay|be)\s+silent\b",
+        r"\bultron\b.{0,60}\b(?:do\s+not|don't)\s+(?:respond|reply|speak|answer)\b",
+        r"\bno\s+ultron\s+(?:response|reply|comment)\b",
+    )
+    return any(re.search(pattern, message, flags=re.IGNORECASE) for pattern in patterns)
+
+
 def _visible_model_content(content: str) -> str | None:
     cleaned = content.strip()
     if not cleaned or cleaned == "[[SILENT]]":
         return None
     return cleaned
+
+
+def _is_message_echo(candidate: str, source: str) -> bool:
+    """Reject an agent turn that merely repeats the other visible speaker."""
+
+    cleaned = re.sub(r"^\s*CHIEF\s*:\s*", "", candidate, flags=re.IGNORECASE)
+
+    def normalize(value: str) -> str:
+        return " ".join(value.split()).casefold()
+
+    return normalize(cleaned) == normalize(source)
+
+
+def _speaker_contribution(content: str, *, speaker: str, other_speaker: str) -> str | None:
+    """Keep only the attributed agent's text when a model scripts multiple speakers."""
+
+    own_pattern = re.compile(rf"^\s*{re.escape(speaker)}\s*:\s*", flags=re.IGNORECASE | re.MULTILINE)
+    other_pattern = re.compile(
+        rf"^\s*{re.escape(other_speaker)}\s*:\s*", flags=re.IGNORECASE | re.MULTILINE
+    )
+    own_match = own_pattern.search(content)
+    start = own_match.end() if own_match else 0
+    other_match = other_pattern.search(content, pos=start)
+    if other_match:
+        end = other_match.start()
+    else:
+        end = len(content)
+    contribution = content[start:end].strip()
+    contribution = re.sub(
+        rf"^\s*I(?:'ll|\s+will)\s+(?:respond|answer)\s+as\s+{re.escape(speaker)}\.?\s*",
+        "",
+        contribution,
+        flags=re.IGNORECASE,
+    ).strip()
+    return contribution or None
 
 
 def _ultron_turn(
@@ -1094,7 +1140,7 @@ def _ultron_turn(
     chief_message: str | None = None,
     leads: bool = False,
 ) -> AgentChatMessage | None:
-    if not settings.ultron_enabled:
+    if not settings.ultron_enabled or _ultron_silenced_by_user(user_message):
         return None
 
     context_parts = [ULTRON_PERSONA]
@@ -1121,6 +1167,11 @@ def _ultron_turn(
 
     content = _visible_model_content(result.content)
     if content is None:
+        return None
+    content = _speaker_contribution(content, speaker="ULTRON", other_speaker="CHIEF")
+    if content is None:
+        return None
+    if chief_message and _is_message_echo(content, chief_message):
         return None
     return AgentChatMessage(
         speaker="ULTRON",
@@ -1532,6 +1583,12 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
         )
 
     chief_content = _visible_model_content(result.content)
+    if chief_content is not None:
+        chief_content = _speaker_contribution(
+            chief_content,
+            speaker="CHIEF",
+            other_speaker="ULTRON",
+        )
     if chief_content is not None:
         agent_messages.append(
             AgentChatMessage(
