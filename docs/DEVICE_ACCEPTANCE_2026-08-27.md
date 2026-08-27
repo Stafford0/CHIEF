@@ -3,8 +3,8 @@
 ## Result
 
 **PASS.** `feature/chief-ultron-conversation` completed local Ollama, live API, tool-boundary,
-session-restart, and React interface acceptance on RamJet. The branch is ready for owner review
-before merge; this report does not itself authorize or perform the merge.
+session-restart, and React interface acceptance on RamJet. Following owner review and approval,
+the verified branch was merged into `main` as merge commit `fe9a621` on August 27, 2026.
 
 ## Device and runtime
 
