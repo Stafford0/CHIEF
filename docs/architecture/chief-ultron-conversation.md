@@ -13,6 +13,13 @@ execution path. It evaluates every exchange and can return `[[SILENT]]` when it 
 useful to add. When the user begins a message by addressing Ultron, Ultron leads and CHIEF
 may join if operationally useful. Ultron can recommend actions but cannot execute them.
 
+## Visual scope decision
+
+The previously discussed Three.js Ultron figure viewer was intentionally discarded on
+August 27, 2026. It is not a missing deliverable and should not be recovered or rebuilt unless
+the owner explicitly reopens the decision. Ultron remains a separately attributed voice in
+the shared CHIEF conversation UI.
+
 ## RamJet model selection
 
 Benchmarked on August 27, 2026 against the locally installed models:
