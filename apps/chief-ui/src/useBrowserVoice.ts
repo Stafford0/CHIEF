@@ -87,6 +87,7 @@ export function useBrowserVoice(
   const inputAvailable = Boolean(recognitionConstructor && window.isSecureContext);
   const outputAvailable = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const spokenQueueRef = useRef(0);
   const draftPrefixRef = useRef("");
   const intentionalAbortRef = useRef(false);
   const [listening, setListening] = useState(false);
@@ -157,6 +158,7 @@ export function useBrowserVoice(
   const stopSpeaking = useCallback(() => {
     if (!outputAvailable) return;
     window.speechSynthesis.cancel();
+    spokenQueueRef.current = 0;
     setSpeaking(false);
     setStatus((current) => (current === "speaking" ? "idle" : current));
   }, [outputAvailable]);
@@ -207,6 +209,7 @@ export function useBrowserVoice(
     setTtsEnabled((enabled) => {
       if (enabled) {
         window.speechSynthesis.cancel();
+        spokenQueueRef.current = 0;
         setSpeaking(false);
         setStatus("idle");
         setStatusText("Spoken replies are off.");
@@ -220,8 +223,8 @@ export function useBrowserVoice(
   const speak = useCallback(
     (text: string) => {
       if (!ttsEnabled || !outputAvailable || !text.trim()) return;
-      window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
+      spokenQueueRef.current += 1;
       utterance.lang = navigator.language || "en-US";
       utterance.onstart = () => {
         setSpeaking(true);
@@ -229,14 +232,20 @@ export function useBrowserVoice(
         setStatusText("Speaking. Push stop audio to interrupt.");
       };
       utterance.onend = () => {
-        setSpeaking(false);
-        setStatus("idle");
-        setStatusText("Spoken reply finished.");
+        spokenQueueRef.current = Math.max(0, spokenQueueRef.current - 1);
+        if (spokenQueueRef.current === 0) {
+          setSpeaking(false);
+          setStatus("idle");
+          setStatusText("Spoken reply finished.");
+        }
       };
       utterance.onerror = () => {
-        setSpeaking(false);
-        setStatus("error");
-        setStatusText("The browser could not play this spoken reply.");
+        spokenQueueRef.current = Math.max(0, spokenQueueRef.current - 1);
+        if (spokenQueueRef.current === 0) {
+          setSpeaking(false);
+          setStatus("error");
+          setStatusText("The browser could not play this spoken reply.");
+        }
       };
       window.speechSynthesis.speak(utterance);
     },
@@ -257,7 +266,8 @@ export function useBrowserVoice(
   useEffect(
     () => () => {
       recognitionRef.current?.abort();
-      if (outputAvailable) window.speechSynthesis.cancel();
+    if (outputAvailable) window.speechSynthesis.cancel();
+    spokenQueueRef.current = 0;
     },
     [outputAvailable],
   );

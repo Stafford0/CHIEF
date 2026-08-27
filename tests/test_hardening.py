@@ -18,8 +18,27 @@ def test_operational_headers_and_request_id():
     assert response.headers["cache-control"] == "no-store"
 
 
-def test_readiness_is_separate_from_liveness():
+def test_readiness_is_separate_from_liveness(monkeypatch):
+    monkeypatch.setattr(
+        app_module.model_provider,
+        "available_models",
+        lambda: {app_module.settings.ollama_model, app_module.settings.ultron_ollama_model},
+    )
     assert TestClient(app).get("/ready").json()["status"] == "ready"
+
+
+def test_readiness_reports_degraded_when_only_ultron_is_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        app_module.model_provider,
+        "available_models",
+        lambda: {app_module.settings.ollama_model},
+    )
+
+    response = TestClient(app).get("/ready")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "degraded"
+    assert response.json()["agents"] == {"chief": "ready", "ultron": "unavailable"}
 
 
 def test_configured_api_token_protects_non_health_routes(monkeypatch):
@@ -97,6 +116,11 @@ def test_readiness_fails_closed_when_a_store_check_raises(monkeypatch):
         raise RuntimeError("database unavailable")
 
     monkeypatch.setattr(app_module.memory_store, "health", unavailable)
+    monkeypatch.setattr(
+        app_module.model_provider,
+        "available_models",
+        lambda: {app_module.settings.ollama_model, app_module.settings.ultron_ollama_model},
+    )
     response = TestClient(app).get("/ready")
 
     assert response.status_code == 503

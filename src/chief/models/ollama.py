@@ -119,3 +119,27 @@ class OllamaProvider(ModelProvider):
             model=self.model,
             latency_ms=(time.perf_counter() - started) * 1000,
         )
+
+    def available_models(self) -> set[str]:
+        """Return the locally installed Ollama model names."""
+
+        http_request = request.Request(f"{self.base_url}/api/tags", method="GET")
+        try:
+            with request.urlopen(http_request, timeout=min(self.timeout, 5.0)) as response:
+                raw = response.read(self.max_response_bytes + 1)
+                if len(raw) > self.max_response_bytes:
+                    raise RuntimeError("Ollama model inventory exceeded the size limit.")
+                data = json.loads(raw.decode("utf-8"))
+        except (TimeoutError, error.HTTPError, error.URLError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Ollama model inventory is unavailable.") from exc
+
+        models = data.get("models")
+        if not isinstance(models, list):
+            raise TypeError("Ollama returned an invalid model inventory.")
+        return {
+            name
+            for item in models
+            if isinstance(item, dict)
+            for name in (item.get("name"), item.get("model"))
+            if isinstance(name, str) and name
+        }

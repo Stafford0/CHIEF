@@ -48,6 +48,7 @@ class ConversationSession:
     owner_id: str = "local"
     messages: list[SessionMessage] = field(default_factory=list)
     pending_tool_call: PendingToolCall | None = None
+    ultron_silenced: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     max_messages: int = 200
@@ -93,6 +94,14 @@ class ConversationSession:
         self._notify_change()
 
         return message
+
+    def set_ultron_silenced(self, silenced: bool) -> None:
+        """Persist the owner's explicit Ultron participation preference."""
+
+        with self._lock:
+            self.ultron_silenced = silenced
+            self.updated_at = datetime.now(UTC)
+        self._notify_change()
 
     def propose_tool(self, call: PlannedToolCall) -> PendingToolCall:
         with self._lock:

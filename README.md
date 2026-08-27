@@ -89,6 +89,7 @@ chief/
 ├── apps/chief-ui/         # React/Vite command center and PWA
 ├── src/chief/
 │   ├── core/              # FastAPI composition, sessions, limits, dashboard, chat planner
+│   ├── persona_files/     # Packaged, version-controlled CHIEF and Ultron prompts
 │   ├── api/               # HTTP adapters for co-founder operating domains
 │   ├── models/            # Provider contracts, Ollama adapter, capability-aware router
 │   ├── memory/            # Scoped temporal memory and retrieval
@@ -117,7 +118,8 @@ chief/
 Prerequisites:
 
 - Python 3.12 or newer
-- Ollama running locally with the configured model (default: `qwen3:4b`)
+- Ollama running locally with both configured models (`qwen3:4b` for CHIEF and
+  `llama3.1:8b` for Ultron by default)
 - Node.js and npm for the React command center
 
 Install the Python package and development tools:
@@ -186,6 +188,10 @@ CHIEF has a strong local control plane, but it is not yet a finished autonomous 
   automation fabric.
 - Sensitive chat approvals are persistent and single-use. The separate plan approval ledger
   is currently process-local and has no complete user-facing issuance workflow.
+- Attributed chat streams each agent contribution as it completes. The operator can cancel a
+  pending turn, and the UI reports model degradation instead of silently hiding it.
+- Ultron can be silenced for one turn or until explicitly rejoined. Participation state is
+  session-scoped and survives a CHIEF restart.
 - Voice is push-to-talk/browser-TTS, not a full-duplex, wake-word, streaming backend.
 - Notification policy and delivery records exist, but no real push, email, SMS, or desktop
   dispatcher is connected.

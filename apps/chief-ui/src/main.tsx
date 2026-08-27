@@ -9,14 +9,21 @@ import {
   Building2, Cable, CircleDot, Landmark, UserRoundCog,
 } from "lucide-react";
 import "./styles.css";
-import { ChiefApiError, hasChiefApiToken, requestJson, setChiefApiToken } from "./api";
+import { ChiefApiError, hasChiefApiToken, requestJson, setChiefApiToken, streamJsonLines } from "./api";
 import { useBrowserVoice, type BrowserVoiceControls } from "./useBrowserVoice";
 
 type Health = { status: string; system: string; version: string };
+type Readiness = { status: "ready" | "degraded" | "not_ready"; agents: { chief: string; ultron: string } };
 type SystemInfo = { name: string; full_name: string; version: string; milestone: string; environment: string };
-type ChatMessage = { role: "user" | "chief" | "ultron"; content: string };
+type ChatMessage = { role: "user" | "chief" | "ultron" | "system"; content: string };
 type AgentChatMessage = { speaker: "CHIEF" | "ULTRON"; content: string; provider: string; model: string };
 type ChatResponse = { response: string; provider: string; model: string; session_id: string; messages?: AgentChatMessage[] };
+type ChatStreamEvent =
+  | { type: "start"; session_id: string }
+  | { type: "status"; speaker: "CHIEF" | "ULTRON"; state: string; message: string }
+  | { type: "agent"; message: AgentChatMessage }
+  | { type: "complete"; response: ChatResponse }
+  | { type: "error"; message: string };
 type PortfolioSummary = {
   owner_id: string;
   businesses: number;
@@ -93,6 +100,7 @@ const fmtPct = (v: number | null | undefined) => v == null ? "--" : `${Math.roun
 
 function App() {
   const [health, setHealth] = useState<Health | null>(null);
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [system, setSystem] = useState<SystemInfo | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [view, setView] = useState<View>(() => {
@@ -104,6 +112,7 @@ function App() {
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(() => sessionStorage.getItem("chief.session"));
   const [busy, setBusy] = useState(false);
+  const [streamStatus, setStreamStatus] = useState<string | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [pairingRequired, setPairingRequired] = useState(
     () => !API_IS_LOOPBACK && !hasChiefApiToken(),
@@ -118,10 +127,11 @@ function App() {
 
   async function loadTelemetry() {
     try {
-      const [nextHealth, nextSystem, nextDashboard] = await Promise.all([
+      const [nextHealth, nextSystem, nextDashboard, nextReadiness] = await Promise.all([
         requestJson<Health>(`${API_BASE}/health`, {}, 5000), requestJson<SystemInfo>(`${API_BASE}/system`, {}, 5000), requestJson<Dashboard>(`${API_BASE}/dashboard`, {}, 8000),
+        requestJson<Readiness>(`${API_BASE}/ready`, {}, 8000).catch(() => ({ status: "not_ready" as const, agents: { chief: "unavailable", ultron: "unavailable" } })),
       ]);
-      setHealth(nextHealth); setSystem(nextSystem); setDashboard(nextDashboard); setApiError(null);
+      setHealth(nextHealth); setSystem(nextSystem); setDashboard(nextDashboard); setReadiness(nextReadiness); setApiError(null);
     } catch (error) {
       if (error instanceof ChiefApiError && error.status === 401) setPairingRequired(true);
       setApiError(error instanceof Error ? error.message : "Connection failed");
@@ -217,38 +227,61 @@ function App() {
     const rows: Array<{ text: string; mild?: boolean }> = [];
     if (apiError) rows.push({ text: apiError });
     if (dashboard && !dashboard.ollama.online) rows.push({ text: "Ollama service offline" });
+    if (readiness?.status === "degraded") rows.push({ text: "CHIEF ready · Ultron unavailable", mild: true });
+    if (readiness?.status === "not_ready") rows.push({ text: "CHIEF model unavailable" });
     if (dashboard?.cpu.percent != null && dashboard.cpu.percent > 85) rows.push({ text: `CPU load high: ${fmtPct(dashboard.cpu.percent)}` });
     if (dashboard?.memory.percent != null && dashboard.memory.percent > 88) rows.push({ text: `Memory pressure: ${fmtPct(dashboard.memory.percent)}` });
     if (dashboard?.disk.percent != null && dashboard.disk.percent > 90) rows.push({ text: `Disk utilization: ${fmtPct(dashboard.disk.percent)}` });
     if (dashboard?.gpu.available === false) rows.push({ text: "GPU telemetry unavailable", mild: true });
     if (online && !API_IS_PROTECTED && !API_IS_LOOPBACK) rows.push({ text: "API link uses unprotected HTTP", mild: true });
     return rows;
-  }, [apiError, dashboard, online]);
+  }, [apiError, dashboard, online, readiness]);
 
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
     const message = input.trim();
     if (!message || busy) return;
-    setMessages((m) => [...m, { role: "user", content: message }]); setInput(""); setBusy(true);
+    setMessages((m) => [...m, { role: "user", content: message }]); setInput(""); setBusy(true); setStreamStatus("Opening the shared channel…");
     try {
       chatAbort.current = new AbortController();
-      const data = await requestJson<ChatResponse>(`${API_BASE}/chat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, session_id: sessionId }), signal: chatAbort.current.signal }, 130000);
-      const replies: ChatMessage[] = data.messages?.length
-        ? data.messages.map((reply) => ({ role: reply.speaker === "ULTRON" ? "ultron" : "chief", content: reply.content }))
-        : [{ role: "chief", content: data.response }];
-      setSessionId(data.session_id); sessionStorage.setItem("chief.session", data.session_id); setMessages((m) => [...m, ...replies]); setApiError(null); void loadTelemetry();
-      voice.speak(replies.map((reply) => `${reply.role === "ultron" ? "Ultron" : "Chief"}. ${reply.content}`).join(" "));
+      await streamJsonLines<ChatStreamEvent>(`${API_BASE}/chat/stream`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message, session_id: sessionId }), signal: chatAbort.current.signal }, (streamEvent) => {
+        if (streamEvent.type === "start") {
+          setSessionId(streamEvent.session_id); sessionStorage.setItem("chief.session", streamEvent.session_id);
+        } else if (streamEvent.type === "status") {
+          setStreamStatus(streamEvent.state === "thinking" ? streamEvent.message : null);
+          if (streamEvent.state === "unavailable" || streamEvent.state === "disabled") {
+            setMessages((current) => [...current, { role: "system", content: streamEvent.message }]);
+          }
+        } else if (streamEvent.type === "agent") {
+          const reply: ChatMessage = { role: streamEvent.message.speaker === "ULTRON" ? "ultron" : "chief", content: streamEvent.message.content };
+          setMessages((current) => [...current, reply]);
+          voice.speak(`${streamEvent.message.speaker === "ULTRON" ? "Ultron" : "Chief"}. ${reply.content}`);
+        } else if (streamEvent.type === "complete") {
+          setSessionId(streamEvent.response.session_id); sessionStorage.setItem("chief.session", streamEvent.response.session_id); setStreamStatus(null);
+        } else if (streamEvent.type === "error") {
+          throw new Error(streamEvent.message);
+        }
+      });
+      setApiError(null); void loadTelemetry();
     } catch (error) {
-      setApiError(error instanceof Error ? error.message : "Chat failed");
-      setMessages((m) => [...m, { role: "chief", content: "Unable to reach CHIEF core. Check the API connection." }]);
-    } finally { setBusy(false); chatAbort.current = null; }
+      const cancelled = error instanceof DOMException && error.name === "AbortError";
+      if (!cancelled) {
+        setApiError(error instanceof Error ? error.message : "Chat failed");
+        setMessages((m) => [...m, { role: "system", content: "The shared channel was interrupted. Check CHIEF core status." }]);
+      }
+    } finally { setBusy(false); setStreamStatus(null); chatAbort.current = null; }
+  }
+
+  function cancelChat() {
+    chatAbort.current?.abort();
+    setMessages((current) => [...current, { role: "system", content: "Response cancelled by the operator." }]);
   }
 
   return <main className="c2-shell">
     <header className="c2-top hud-frame">
       <div className="c2-brand"><div className="c2-brand-glyph"><Bot size={36}/></div><div><h1>CHIEF</h1><p>Cognitive Hub for Intelligence, Execution &amp; Foresight</p></div></div>
       <div className="c2-head-cells">
-        <HeaderCell label="// SYSTEM STATUS" value={online ? "ACTIVE" : "OFFLINE"} hot={online}/>
+        <HeaderCell label="// SYSTEM STATUS" value={!online || readiness?.status === "not_ready" ? "NOT READY" : readiness?.status === "degraded" ? "DEGRADED" : "ACTIVE"} hot={online && readiness?.status === "ready"}/>
         <HeaderCell label="CURRENT MILESTONE" value={system?.milestone || "CHIEF ZERO"} sub={`${system?.environment || "development"} / ${dashboard?.host.hostname || "local"}`}/>
         <HeaderCell label="SYSTEM TIME" value={clock.toLocaleDateString()} sub={clock.toLocaleTimeString([], { hour12: false })}/>
         <HeaderCell label="OPERATOR" value="DIRECTOR"/>
@@ -308,7 +341,7 @@ function App() {
           online={online}
           onRefresh={()=>void loadTelemetry()}
           onBegin={()=>{setInput("Help me define my first business portfolio.");setView("chat");}}
-        /> : <ChatPanel messages={messages} input={input} setInput={setInput} sendMessage={sendMessage} busy={busy} voice={voice} appInstalled={appInstalled} installReady={Boolean(installPrompt)} installApp={installApp}/>}
+        /> : <ChatPanel messages={messages} input={input} setInput={setInput} sendMessage={sendMessage} cancelChat={cancelChat} busy={busy} streamStatus={streamStatus} voice={voice} appInstalled={appInstalled} installReady={Boolean(installPrompt)} installApp={installApp}/>}
       </section>
 
       <aside className="c2-right">
@@ -319,7 +352,7 @@ function App() {
           <Panel title="SYSTEM DIAGNOSTICS" className="c2-diagnostics"><div className="diag-grid"><div><InfoRow label="API" value={online ? "OPERATIONAL" : "OFFLINE"}/><InfoRow label="HOST" value={dashboard?.host.hostname || "--"}/><InfoRow label="OS" value={`${dashboard?.host.os || "--"} ${dashboard?.host.os_release || ""}`}/><InfoRow label="CORES" value={String(dashboard?.host.cpu_count ?? "--")}/><InfoRow label="TOOLS" value={String(toolCount)}/><InfoRow label="SESSIONS" value={String(dashboard?.runtime.sessions ?? 0)}/></div><div className="diag-gauges"><GaugeBlock icon={<Cpu/>} label="CPU" value={fmtPct(dashboard?.cpu.percent)}/><GaugeBlock icon={<MemoryStick/>} label="RAM" value={dashboard?.memory.total_gb ? `${dashboard.memory.used_gb}/${dashboard.memory.total_gb} GB` : "--"}/><GaugeBlock icon={<Zap/>} label="GPU TEMP" value={dashboard?.gpu.temperature_c != null ? `${dashboard.gpu.temperature_c}°C` : "--"}/><GaugeBlock icon={<HardDrive/>} label="DISK FREE" value={dashboard ? `${dashboard.disk.free_gb} GB` : "--"}/></div></div></Panel>
         </div>
         <div className="c2-right-side">
-          <Panel title="ACTIVE SERVICES" className="c2-services"><ServiceRow label="CHIEF CORE" value={online ? "ONLINE" : "OFFLINE"} good={online}/><ServiceRow label="FASTAPI" value={dashboard?.runtime.api_status || "--"} good={online}/><ServiceRow label="OLLAMA" value={dashboard?.ollama.online ? "ONLINE" : "OFFLINE"} good={!!dashboard?.ollama.online}/><ServiceRow label="TOOL REGISTRY" value={`${toolCount} TOOLS`} good/><ServiceRow label="MEMORY" value="LOCAL" good/></Panel>
+          <Panel title="ACTIVE SERVICES" className="c2-services"><ServiceRow label="CHIEF CORE" value={online ? "ONLINE" : "OFFLINE"} good={online}/><ServiceRow label="CHIEF MODEL" value={readiness?.agents.chief?.toUpperCase() || "CHECKING"} good={readiness?.agents.chief === "ready"}/><ServiceRow label="ULTRON MODEL" value={readiness?.agents.ultron?.toUpperCase() || "CHECKING"} good={readiness?.agents.ultron === "ready"}/><ServiceRow label="OLLAMA" value={dashboard?.ollama.online ? "ONLINE" : "OFFLINE"} good={!!dashboard?.ollama.online}/><ServiceRow label="TOOL REGISTRY" value={`${toolCount} TOOLS`} good/></Panel>
           <Panel title="NETWORK STATUS" className="c2-network"><div className="network-visual"><Router size={54}/><span>{clientIsPhone ? "MOBILE CLIENT" : "DESKTOP CLIENT"}</span><strong>{dashboard?.network.addresses[0] || "NO ADDRESS"}</strong></div><InfoRow label="HOST" value={dashboard?.network.hostname || "--"}/><InfoRow label="LINK" value={adapter?.link_speed || "--"}/><InfoRow label="ADAPTER" value={adapter?.name || "--"}/></Panel>
           <Panel title="ALERTS FEED" className="c2-alerts">{alerts.length ? alerts.slice(0,5).map((a,i)=><Alert key={i} text={a.text} mild={a.mild}/>) : <div className="clear"><ShieldCheck size={15}/> No active system alerts</div>}</Panel>
           <Panel title="SHORTCUTS" className="c2-shortcuts"><div className="shortcut-grid"><Action icon={<BriefcaseBusiness/>} label="Portfolio" onClick={()=>setView("portfolio")}/><Action icon={<MessageSquare/>} label="Chat" onClick={()=>setView("chat")}/><Action icon={<Wrench/>} label="Tools"/><Action icon={<ShieldCheck/>} label="Audit"/><Action icon={<RefreshCw/>} label="Refresh" onClick={loadTelemetry}/><Action icon={<Download/>} label={pwaStatus} onClick={installPrompt ? installApp : undefined}/></div></Panel>
@@ -466,7 +499,7 @@ function humanizeStep(value: string): string {
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : "Define your first business";
 }
 
-function ChatPanel({messages,input,setInput,sendMessage,busy,voice,appInstalled,installReady,installApp}:{messages:ChatMessage[];input:string;setInput:(v:string)=>void;sendMessage:(e:FormEvent)=>void;busy:boolean;voice:BrowserVoiceControls;appInstalled:boolean;installReady:boolean;installApp:()=>Promise<void>}) {
+function ChatPanel({messages,input,setInput,sendMessage,cancelChat,busy,streamStatus,voice,appInstalled,installReady,installApp}:{messages:ChatMessage[];input:string;setInput:(v:string)=>void;sendMessage:(e:FormEvent)=>void;cancelChat:()=>void;busy:boolean;streamStatus:string|null;voice:BrowserVoiceControls;appInstalled:boolean;installReady:boolean;installApp:()=>Promise<void>}) {
   const audioActive = voice.listening || voice.speaking;
   return <section className="chat-panel hud-frame">
     <div className="c2-map-head"><div><span className="eyebrow">DIRECT CHANNEL</span><h2>CHIEF COMMAND INTERFACE</h2></div><div className="live-badge"><i/> {busy?"PROCESSING":voice.listening?"LISTENING":voice.speaking?"SPEAKING":"READY"}</div></div>
@@ -490,7 +523,8 @@ function ChatPanel({messages,input,setInput,sendMessage,busy,voice,appInstalled,
         <small className="pwa-state">APP: {appInstalled?"INSTALLED":installReady?"INSTALL READY":"INSTALL FROM BROWSER MENU"} · CAMERA: DISABLED</small>
       </div>
     </div>
-    <form className="command-input" onSubmit={sendMessage}><TerminalSquare/><input value={input} onChange={e=>setInput(e.target.value)} placeholder="Issue directive to CHIEF..."/><button type="submit" disabled={busy}><Send/> TRANSMIT</button></form>
+    {streamStatus && <div className="stream-status" role="status" aria-live="polite"><i/>{streamStatus}</div>}
+    <form className="command-input" onSubmit={sendMessage}><TerminalSquare/><input value={input} onChange={e=>setInput(e.target.value)} placeholder="Issue directive to CHIEF..." disabled={busy}/>{busy?<button type="button" className="cancel-stream" onClick={cancelChat}><Square/> CANCEL</button>:<button type="submit"><Send/> TRANSMIT</button>}</form>
   </section>
 }
 function HeaderCell({label,value,sub,hot=false}:{label:string;value:string;sub?:string;hot?:boolean}){return <div className="header-cell"><span>{label}</span><strong className={hot?"teal":""}>{value}</strong>{sub&&<small>{sub}</small>}</div>}

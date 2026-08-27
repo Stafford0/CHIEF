@@ -13,6 +13,17 @@ execution path. It evaluates every exchange and can return `[[SILENT]]` when it 
 useful to add. When the user begins a message by addressing Ultron, Ultron leads and CHIEF
 may join if operationally useful. Ultron can recommend actions but cannot execute them.
 
+Agent contributions are delivered as an attributed JSON Lines stream so the first completed
+speaker appears immediately while the other is still considering. The UI retains an operator
+cancel control and shows model failures explicitly. Readiness is `ready` when both configured
+models are installed, `degraded` when CHIEF is available but Ultron is not, and `not_ready`
+when CHIEF or a core dependency is unavailable.
+
+The owner can issue the direct commands “Ultron, stay silent for this turn,” “Ultron, stay
+silent until I bring you back,” and “Ultron, rejoin.” Persistent silence is scoped to the
+conversation session and stored durably. Quoted, hypothetical, or analytical mentions of
+silence do not change participation.
+
 ## Visual scope decision
 
 The previously discussed Three.js Ultron figure viewer was intentionally discarded on

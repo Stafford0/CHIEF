@@ -36,7 +36,8 @@ class SQLiteSessionStore:
                 CREATE TABLE IF NOT EXISTS conversation_sessions (
                     id TEXT PRIMARY KEY, owner_id TEXT NOT NULL,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-                    max_messages INTEGER NOT NULL, max_message_chars INTEGER NOT NULL
+                    max_messages INTEGER NOT NULL, max_message_chars INTEGER NOT NULL,
+                    ultron_silenced INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS ix_conversation_sessions_owner
                     ON conversation_sessions(owner_id, updated_at DESC);
@@ -70,16 +71,29 @@ class SQLiteSessionStore:
                     WHERE proposal_id IS NULL
                     """
                 )
+            session_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(conversation_sessions)")
+            }
+            if "ultron_silenced" not in session_columns:
+                connection.execute(
+                    "ALTER TABLE conversation_sessions "
+                    "ADD COLUMN ultron_silenced INTEGER NOT NULL DEFAULT 0"
+                )
 
     def save(self, session: ConversationSession) -> ConversationSession:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             connection.execute(
                 """
-                INSERT INTO conversation_sessions VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO conversation_sessions(
+                    id, owner_id, created_at, updated_at, max_messages,
+                    max_message_chars, ultron_silenced
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET owner_id=excluded.owner_id,
                     updated_at=excluded.updated_at, max_messages=excluded.max_messages,
-                    max_message_chars=excluded.max_message_chars
+                    max_message_chars=excluded.max_message_chars,
+                    ultron_silenced=excluded.ultron_silenced
                 """,
                 (
                     str(session.id),
@@ -88,6 +102,7 @@ class SQLiteSessionStore:
                     session.updated_at.isoformat(),
                     session.max_messages,
                     session.max_message_chars,
+                    int(session.ultron_silenced),
                 ),
             )
             connection.execute(
@@ -178,6 +193,7 @@ class SQLiteSessionStore:
                 for item in message_rows
             ],
             pending_tool_call=self._pending(pending_row) if pending_row else None,
+            ultron_silenced=bool(row["ultron_silenced"]),
             created_at=datetime.fromisoformat(row["created_at"]),
             updated_at=datetime.fromisoformat(row["updated_at"]),
             max_messages=int(row["max_messages"]),

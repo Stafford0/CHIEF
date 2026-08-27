@@ -20,11 +20,16 @@ before merge; this report does not itself authorize or perform the merge.
 ## Acceptance evidence
 
 - `/health` returned online and `/ready` returned 200 with every state-store check true.
+- `/ready` verified Ollama plus both configured model tags and reported the full `ready` state.
 - Direct Ultron turns led with `llama3.1:8b`; CHIEF used `qwen3:4b`.
 - Ultron truthfully reported zero tool access and the owner's final authority.
 - CHIEF-led turns returned only CHIEF when Ultron had no distinct contribution.
 - Requested shared turns rendered distinct, separately attributed CHIEF and Ultron messages.
-- Explicit owner instructions to silence Ultron were honored deterministically.
+- Shared turns streamed each attributed contribution as it completed, with visible per-agent
+  progress and an operator cancellation control.
+- Explicit owner instructions to silence Ultron for one turn or until rejoined were honored
+  deterministically and persistent silence survived session-store reopening.
+- `Ultron, rejoin` restored participation and streamed Ultron's direct response before CHIEF.
 - Conversation state survived an API restart and retained speaker history.
 - A natural `check system status` request executed the safe `system_status` tool automatically.
 - A sensitive `run tests` request stopped at an exact five-minute approval and cancellation
@@ -47,10 +52,18 @@ to 4–28 seconds for model-backed turns. Both models remained within the config
    before the Ultron model is invoked.
 5. Natural `check system status` wording missed the safe planner path. It now maps directly to
    the read-only runtime status tool.
+6. Repository-root persona files were absent from built wheels. Both prompts are now packaged
+   resources; a clean wheel installation loaded and verified both personas outside the repo.
+7. A fixed browser timeout could expire before two sequential model calls completed. Chat now
+   streams each contribution without a fixed whole-turn timeout and preserves cancellation.
+8. Readiness did not verify Ollama or either configured model. It now reports `ready`,
+   `degraded`, or `not_ready` and names each agent's availability.
+9. Broad silence matching could mistake discussion for an instruction. Only explicit direct
+   commands now alter Ultron participation, with regression coverage for analytical mentions.
 
 ## Final automated verification
 
-- Python: 292 tests passed
+- Python: 297 tests passed
 - Ruff: all checks passed
 - React/Vite: TypeScript and production build passed
 - npm production dependency audit: zero known vulnerabilities

@@ -1,3 +1,5 @@
+from importlib.resources import files
+
 import pytest
 
 from chief.personas import CHIEF_PERSONA, ULTRON_PERSONA, load_persona
@@ -10,6 +12,7 @@ def test_versioned_personas_are_loaded() -> None:
     assert "architectural permission boundary" in ULTRON_PERSONA
     assert "Author only Ultron's contribution" in ULTRON_PERSONA
     assert "[[SILENT]]" in ULTRON_PERSONA
+    assert files("chief.persona_files").joinpath("chief_v1.md").is_file()
 
 
 @pytest.mark.parametrize("filename", ["../chief_v1.md", "personas/chief_v1.md", "chief_v1.txt"])
