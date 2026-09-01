@@ -48,7 +48,12 @@ from chief.memory.commands import (
 )
 from chief.memory.manager import MemoryManager
 from chief.memory.sqlite import SQLiteMemoryStore
+from chief.models.anthropic import AnthropicProvider
+from chief.models.base import ModelPrivacy, ModelProvider, RouteRequirements
+from chief.models.gemini import GeminiProvider
 from chief.models.ollama import OllamaProvider
+from chief.models.openai import OpenAIProvider
+from chief.models.perplexity import PerplexityProvider
 from chief.models.router import ModelRouter
 from chief.notifications import AttentionPolicy, NotificationStore
 from chief.personas import CHIEF_PERSONA, ULTRON_PERSONA
@@ -238,7 +243,71 @@ model_provider = OllamaProvider(
     timeout=settings.model_timeout_seconds,
     max_response_bytes=settings.max_model_response_bytes,
 )
-model_router = ModelRouter([model_provider])
+
+
+def _build_cloud_providers(settings: Settings) -> list[ModelProvider]:
+    """Build the optional, specialty-tagged cloud providers configured via API key."""
+
+    providers: list[ModelProvider] = []
+    if settings.anthropic_api_key:
+        providers.append(
+            AnthropicProvider(
+                api_key=settings.anthropic_api_key,
+                model=settings.anthropic_model,
+                timeout=settings.model_timeout_seconds,
+                max_response_bytes=settings.max_model_response_bytes,
+            )
+        )
+    if settings.gemini_api_key:
+        providers.append(
+            GeminiProvider(
+                api_key=settings.gemini_api_key,
+                model=settings.gemini_model,
+                timeout=settings.model_timeout_seconds,
+                max_response_bytes=settings.max_model_response_bytes,
+            )
+        )
+    if settings.perplexity_api_key:
+        providers.append(
+            PerplexityProvider(
+                api_key=settings.perplexity_api_key,
+                model=settings.perplexity_model,
+                timeout=settings.model_timeout_seconds,
+                max_response_bytes=settings.max_model_response_bytes,
+            )
+        )
+    if settings.openai_api_key:
+        providers.append(
+            OpenAIProvider(
+                api_key=settings.openai_api_key,
+                model=settings.openai_model,
+                timeout=settings.model_timeout_seconds,
+                max_response_bytes=settings.max_model_response_bytes,
+            )
+        )
+    return providers
+
+
+# Cloud specialists first so a matching specialty route prefers them; local Ollama is always
+# appended last as the guaranteed, privacy-safe fallback (see the "general" specialty wildcard
+# in RouteRequirements.accepts).
+model_router = ModelRouter([*_build_cloud_providers(settings), model_provider])
+
+# Named specialty routes for callers that want to delegate a task to whichever provider is
+# optimized for it, falling back to local Ollama when the specialist is unconfigured or down.
+CODING_ROUTE = RouteRequirements(
+    allowed_privacy=frozenset(ModelPrivacy), specialties=frozenset({"coding"})
+)
+RESEARCH_ROUTE = RouteRequirements(
+    allowed_privacy=frozenset(ModelPrivacy), specialties=frozenset({"research"})
+)
+SIGNALS_ROUTE = RouteRequirements(
+    allowed_privacy=frozenset(ModelPrivacy), specialties=frozenset({"signals"})
+)
+VOICE_ROUTE = RouteRequirements(
+    allowed_privacy=frozenset(ModelPrivacy), specialties=frozenset({"voice"})
+)
+
 ultron_provider = OllamaProvider(
     model=settings.ultron_ollama_model,
     base_url=settings.ollama_url,
@@ -271,12 +340,17 @@ def _stream_was_cancelled() -> bool:
     return cancellation is not None and cancellation.is_set()
 
 
-def generate_model(prompt: str, system_prompt: str):
+def generate_model(
+    prompt: str,
+    system_prompt: str,
+    *,
+    requirements: RouteRequirements | None = None,
+):
     """Route providers while preserving runtime/test provider replacement."""
     router = model_router
     if model_provider not in router.providers:
         router = ModelRouter([model_provider])
-    return router.generate(prompt, system_prompt)
+    return router.generate(prompt, system_prompt, requirements=requirements)
 
 
 def generate_ultron_model(prompt: str, system_prompt: str):

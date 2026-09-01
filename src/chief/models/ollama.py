@@ -51,6 +51,7 @@ class OllamaProvider(ModelProvider):
             vision=False,
             audio=False,
             cost_tier=0,
+            specialties=frozenset({"general"}),
         )
 
     def generate(

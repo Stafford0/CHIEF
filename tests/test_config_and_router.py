@@ -107,6 +107,54 @@ def test_router_filters_by_capability_and_privacy():
     assert router.generate("hello", requirements=requirements).provider == "local"
 
 
+def test_router_prefers_specialty_and_falls_back_to_general():
+    coding = FakeProvider(
+        "coding-specialist",
+        error="offline",
+        capabilities=ModelCapabilities(specialties=frozenset({"coding"})),
+    )
+    general = FakeProvider(
+        "general-fallback",
+        capabilities=ModelCapabilities(specialties=frozenset({"general"})),
+    )
+    router = ModelRouter([coding, general])
+    requirements = RouteRequirements(specialties=frozenset({"coding"}))
+
+    assert router.generate("fix this bug", requirements=requirements).provider == "general-fallback"
+
+
+def test_router_excludes_mismatched_specialty():
+    research = FakeProvider(
+        "research-specialist",
+        capabilities=ModelCapabilities(specialties=frozenset({"research"})),
+    )
+    router = ModelRouter([research])
+    requirements = RouteRequirements(specialties=frozenset({"coding"}))
+
+    with pytest.raises(RuntimeError, match="No configured model provider"):
+        router.generate("fix this bug", requirements=requirements)
+
+
+def test_cloud_provider_keys_default_to_none(monkeypatch):
+    for key in (
+        "CHIEF_ANTHROPIC_API_KEY",
+        "CHIEF_GEMINI_API_KEY",
+        "CHIEF_PERPLEXITY_API_KEY",
+        "CHIEF_OPENAI_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    settings = Settings.from_env()
+    assert settings.anthropic_api_key is None
+    assert settings.gemini_api_key is None
+    assert settings.perplexity_api_key is None
+    assert settings.openai_api_key is None
+
+
+def test_cloud_provider_key_reads_from_env(monkeypatch):
+    monkeypatch.setenv("CHIEF_ANTHROPIC_API_KEY", "  test-key  ")
+    assert Settings.from_env().anthropic_api_key == "test-key"
+
+
 def test_router_opens_and_recovers_circuit_breaker():
     clock = [0.0]
     provider = FakeProvider("unstable", error="offline")

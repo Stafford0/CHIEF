@@ -36,6 +36,14 @@ class Settings:
     ollama_model: str = "qwen3:4b"
     ultron_ollama_model: str = "llama3.1:8b"
     ultron_enabled: bool = True
+    anthropic_api_key: str | None = None
+    anthropic_model: str = "claude-opus-5"
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-3-pro"
+    perplexity_api_key: str | None = None
+    perplexity_model: str = "sonar-pro"
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-5.1"
     model_timeout_seconds: int = 120
     max_model_response_bytes: int = 2_000_000
     cors_origins: tuple[str, ...] = ("http://127.0.0.1:5173", "http://localhost:5173")
@@ -71,6 +79,14 @@ class Settings:
                 "llama3.1:8b",
             ),
             ultron_enabled=_bool_env("CHIEF_ULTRON_ENABLED", True),
+            anthropic_api_key=os.getenv("CHIEF_ANTHROPIC_API_KEY", "").strip() or None,
+            anthropic_model=os.getenv("CHIEF_ANTHROPIC_MODEL", "claude-opus-5"),
+            gemini_api_key=os.getenv("CHIEF_GEMINI_API_KEY", "").strip() or None,
+            gemini_model=os.getenv("CHIEF_GEMINI_MODEL", "gemini-3-pro"),
+            perplexity_api_key=os.getenv("CHIEF_PERPLEXITY_API_KEY", "").strip() or None,
+            perplexity_model=os.getenv("CHIEF_PERPLEXITY_MODEL", "sonar-pro"),
+            openai_api_key=os.getenv("CHIEF_OPENAI_API_KEY", "").strip() or None,
+            openai_model=os.getenv("CHIEF_OPENAI_MODEL", "gpt-5.1"),
             model_timeout_seconds=_int_env(
                 "CHIEF_MODEL_TIMEOUT_SECONDS", 120, minimum=1, maximum=600
             ),

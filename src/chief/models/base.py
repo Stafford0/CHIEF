@@ -20,6 +20,7 @@ class ModelCapabilities:
     vision: bool = False
     audio: bool = False
     cost_tier: int = 1
+    specialties: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class RouteRequirements:
     vision: bool = False
     audio: bool = False
     max_cost_tier: int | None = None
+    specialties: frozenset[str] = frozenset()
 
     def accepts(self, capabilities: ModelCapabilities) -> bool:
         if capabilities.privacy not in self.allowed_privacy:
@@ -38,6 +40,14 @@ class RouteRequirements:
         for field_name in ("structured_output", "tool_calling", "streaming", "vision", "audio"):
             if getattr(self, field_name) and not getattr(capabilities, field_name):
                 return False
+        # A provider tagged "general" (e.g. the local Ollama fallback) accepts any specialty
+        # requirement so a specialty route always has somewhere to fall back to.
+        if (
+            self.specialties
+            and "general" not in capabilities.specialties
+            and not self.specialties.issubset(capabilities.specialties)
+        ):
+            return False
         return self.max_cost_tier is None or capabilities.cost_tier <= self.max_cost_tier
 
 
