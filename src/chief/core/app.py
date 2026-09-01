@@ -32,6 +32,7 @@ from chief.core.identity import SYSTEM_IDENTITY
 from chief.core.rate_limit import RateLimitDecision, SlidingWindowRateLimiter
 from chief.core.request_limits import RequestBodyLimitMiddleware
 from chief.core.sqlite_session_store import SQLiteSessionStore
+from chief.core.task_router import classify_task_specialty
 from chief.core.tool_planner import DeterministicToolPlanner, PendingAction
 from chief.decisions import SQLiteDecisionStore
 from chief.events.scheduler import Scheduler
@@ -49,7 +50,7 @@ from chief.memory.commands import (
 from chief.memory.manager import MemoryManager
 from chief.memory.sqlite import SQLiteMemoryStore
 from chief.models.anthropic import AnthropicProvider
-from chief.models.base import ModelPrivacy, ModelProvider, RouteRequirements
+from chief.models.base import ModelProvider, RouteRequirements
 from chief.models.gemini import GeminiProvider
 from chief.models.ollama import OllamaProvider
 from chief.models.openai import OpenAIProvider
@@ -292,21 +293,6 @@ def _build_cloud_providers(settings: Settings) -> list[ModelProvider]:
 # appended last as the guaranteed, privacy-safe fallback (see the "general" specialty wildcard
 # in RouteRequirements.accepts).
 model_router = ModelRouter([*_build_cloud_providers(settings), model_provider])
-
-# Named specialty routes for callers that want to delegate a task to whichever provider is
-# optimized for it, falling back to local Ollama when the specialist is unconfigured or down.
-CODING_ROUTE = RouteRequirements(
-    allowed_privacy=frozenset(ModelPrivacy), specialties=frozenset({"coding"})
-)
-RESEARCH_ROUTE = RouteRequirements(
-    allowed_privacy=frozenset(ModelPrivacy), specialties=frozenset({"research"})
-)
-SIGNALS_ROUTE = RouteRequirements(
-    allowed_privacy=frozenset(ModelPrivacy), specialties=frozenset({"signals"})
-)
-VOICE_ROUTE = RouteRequirements(
-    allowed_privacy=frozenset(ModelPrivacy), specialties=frozenset({"voice"})
-)
 
 ultron_provider = OllamaProvider(
     model=settings.ultron_ollama_model,
@@ -1815,6 +1801,7 @@ def chat(chat_request: ChatRequest, request: Request) -> ChatResponse:
         result = generate_model(
             prompt=chat_request.message,
             system_prompt=system_prompt,
+            requirements=classify_task_specialty(chat_request.message),
         )
     except RuntimeError as exc:
         response_text = str(exc)

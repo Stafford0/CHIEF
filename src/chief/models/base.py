@@ -40,10 +40,12 @@ class RouteRequirements:
         for field_name in ("structured_output", "tool_calling", "streaming", "vision", "audio"):
             if getattr(self, field_name) and not getattr(capabilities, field_name):
                 return False
-        # A provider tagged "general" (e.g. the local Ollama fallback) accepts any specialty
-        # requirement so a specialty route always has somewhere to fall back to.
+        # A provider tagged "general" (e.g. the local Ollama fallback), or one that declares no
+        # specialties at all, accepts any specialty requirement so a specialty route always has
+        # somewhere to fall back to.
         if (
             self.specialties
+            and capabilities.specialties
             and "general" not in capabilities.specialties
             and not self.specialties.issubset(capabilities.specialties)
         ):
