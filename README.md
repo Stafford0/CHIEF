@@ -28,7 +28,7 @@ verify the result, and identify anything it could not confirm.
 |---|---|
 | Core API | FastAPI application with liveness, dependency-aware readiness, system, dashboard, portfolio, chat, work, events, foresight, runs, decisions, business graph, notifications, audit, tools, and plans endpoints. |
 | Local interface | Responsive React command center with an explicit blank-portfolio onboarding state, installable PWA shell, mobile layout, offline-safe static cache, opt-in browser push-to-talk, and opt-in spoken replies. |
-| Models | CHIEF-owned provider contract, capability/privacy/cost requirements, ordered fallback, failure tracking, cooldown circuit breaker, and a configured local Ollama adapter. |
+| Models | CHIEF-owned provider contract, capability/privacy/cost/specialty requirements, ordered fallback, failure tracking, cooldown circuit breaker, a configured local Ollama adapter, and optional cloud specialist adapters (Anthropic for coding, Gemini for research, Perplexity for real-time signals, OpenAI for voice/briefing) selected by a deterministic per-message task classifier. Cloud adapters activate only when their API key is configured; CHIEF runs Ollama-only otherwise. |
 | Memory | SQLite memory with types, scope, sensitivity, source provenance, confidence, temporal validity, expiry, correction/supersession, forgetting, and FTS5-assisted retrieval. |
 | Sessions | Owner-scoped, restart-safe SQLite conversations and atomically consumed, expiring tool-approval proposals. |
 | Tools and guard | Whitelisted typed tools with JSON-like input schemas, risk, side-effect, idempotency, and timeout metadata; filesystem roots are scoped; unknown tools fail closed. |
@@ -60,8 +60,8 @@ React PWA / local API client
 Conversation  Operating   Execution
 and memory    domains     control plane
      |         |          |
-  Ollama    portfolio,    tools, plans,
-  router    work, graph,  runs, events,
+ Specialty  portfolio,    tools, plans,
+model router work, graph,  runs, events,
             decisions,    approvals
             foresight
      \         |          /
@@ -160,6 +160,42 @@ Runtime settings are environment variables documented in `.env.example`. CHIEF c
 local tables in `data/chief.db` by default. Do not store credentials in that database or in
 source control; a production secrets vault and encrypted backup policy are not implemented.
 
+### Enabling cloud model specialists (optional)
+
+CHIEF runs Ollama-only until you configure a cloud provider's API key. Each configured key
+adds that specialist to the model router; unconfigured providers are simply skipped, so partial
+setup (e.g. Anthropic only) is safe. Local Ollama always stays available as the fallback for
+every route.
+
+To enable one specialist (Anthropic, for coding tasks, shown here — Gemini/Perplexity/OpenAI
+follow the same pattern with their own `CHIEF_*_API_KEY`/`CHIEF_*_MODEL` variables):
+
+1. **Get a key** from the provider's console (for Anthropic: [console.anthropic.com](https://console.anthropic.com) →
+   Settings → API Keys).
+2. **Add it to `.env`** on the machine that actually runs CHIEF (`cp .env.example .env` if you
+   don't have one yet), uncommenting the matching pair:
+   ```
+   CHIEF_ANTHROPIC_API_KEY=sk-ant-...your real key...
+   CHIEF_ANTHROPIC_MODEL=claude-opus-5
+   ```
+   `.env` is gitignored (`git check-ignore -v .env` should confirm) — never commit a real key.
+3. **Restart CHIEF's API process.** Providers are constructed once at import time from
+   `Settings.from_env()`, so a running process won't pick up a key added after it started.
+4. **Smoke-test it**, either directly against the adapter:
+   ```python
+   from chief.models.anthropic import AnthropicProvider
+   result = AnthropicProvider(api_key="sk-ant-...").generate("Say 'CHIEF-CLAUDE-OK'.")
+   print(result.content, result.provider, result.model)
+   ```
+   or through the running API — a message matching a coding/research/signals keyword
+   (`src/chief/core/task_router.py`) should come back with `"provider"` set to the specialist
+   instead of `"ollama"`:
+   ```bash
+   curl -X POST http://127.0.0.1:8000/chat \
+     -H "Content-Type: application/json" \
+     -d '{"message": "There is a bug in this function, can you debug it?"}'
+   ```
+
 ## Network and authority defaults
 
 - Remote requests are denied by default. Keep the API bound to `127.0.0.1` for normal local
@@ -178,8 +214,11 @@ source control; a production secrets vault and encrypted backup policy are not i
 
 CHIEF has a strong local control plane, but it is not yet a finished autonomous co-founder:
 
-- Ollama is the only production-wired model adapter; capability-aware multi-provider routing
-  exists as a framework, not an operational provider portfolio.
+- Ollama is the only model adapter enabled by default. Anthropic/Gemini/Perplexity/OpenAI
+  adapters and specialty-based routing exist and are wired into the chat path, but each cloud
+  specialist stays inactive until its own API key is configured (see "Enabling cloud model
+  specialists" above); task classification is a fixed keyword map, not model-driven intent
+  detection.
 - Integration contracts are implemented, but live GitHub, Stripe, email, calendar, CRM,
   support, analytics, and market-data connectors still require credentials and adapters.
 - Schedules and runs advance through bounded tick calls; no supervised always-on worker or
