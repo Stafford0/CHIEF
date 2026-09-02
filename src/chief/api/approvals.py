@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
@@ -98,11 +98,16 @@ def create_approvals_router(
     tool_registry: ToolRegistry,
     execution_control: ExecutionControlStore,
     configured_execution_enabled: bool,
+    on_execution_change: Callable[[bool], None] | None = None,
 ) -> APIRouter:
     router = APIRouter(tags=["approvals"])
 
     def execution_allowed() -> bool:
         return configured_execution_enabled and execution_control.get().enabled
+
+    def notify_execution_change(enabled: bool) -> None:
+        if on_execution_change is not None:
+            on_execution_change(enabled)
 
     @router.get("/approvals")
     def list_approvals(request: Request) -> list[dict[str, object]]:
@@ -264,6 +269,7 @@ def create_approvals_router(
             actor_id=_actor(request),
             reason=payload.reason or "Operator emergency stop",
         )
+        notify_execution_change(False)
         tool_registry.audit_log.record(
             AuditEvent(
                 tool_name="control.execution",
@@ -293,6 +299,7 @@ def create_approvals_router(
             actor_id=_actor(request),
             reason=payload.reason or "Operator resumed execution",
         )
+        notify_execution_change(True)
         tool_registry.audit_log.record(
             AuditEvent(
                 tool_name="control.execution",
