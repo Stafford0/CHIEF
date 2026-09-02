@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from chief.core.execution_control import ExecutionControlStore
 from chief.events.scheduler import Scheduler
 from chief.events.store import EventStore
 from chief.foresight.scoring import rank_signals
@@ -92,6 +93,7 @@ class RuntimeSupervisor:
         run_store: SQLiteRunStore,
         run_engine: RunEngine,
         state_store: RuntimeStateStore | None = None,
+        execution_control: ExecutionControlStore | None = None,
         worker_id: str = "chief-runtime",
         min_free_disk_bytes: int = 512 * 1024 * 1024,
         clock_skew_tolerance_seconds: int = 5,
@@ -115,6 +117,7 @@ class RuntimeSupervisor:
         self.run_store = run_store
         self.run_engine = run_engine
         self.state_store = state_store or RuntimeStateStore(event_store.database_path)
+        self.execution_control = execution_control or ExecutionControlStore(event_store.database_path)
         self.worker_id = worker_id
         self.min_free_disk_bytes = min_free_disk_bytes
         self.clock_skew_tolerance = timedelta(seconds=clock_skew_tolerance_seconds)
@@ -127,6 +130,9 @@ class RuntimeSupervisor:
 
     def _preflight(self, now: datetime) -> tuple[int, str | None]:
         free_disk = self._free_disk_bytes()
+        execution = self.execution_control.get()
+        if not execution.enabled:
+            return free_disk, f"execution paused by operator: {execution.reason or 'no reason supplied'}"
         if free_disk < self.min_free_disk_bytes:
             return free_disk, (
                 f"free disk {free_disk} is below required minimum {self.min_free_disk_bytes}"
@@ -186,9 +192,10 @@ class RuntimeSupervisor:
         now = (now or datetime.now(UTC)).astimezone(UTC)
         free_disk, reason = self._preflight(now)
         if reason is not None:
-            self.state_store.record(now=now, status="degraded", reason=reason)
+            status = "paused" if reason.startswith("execution paused") else "degraded"
+            self.state_store.record(now=now, status=status, reason=reason)
             return RuntimeTick(
-                status="degraded",
+                status=status,
                 scheduled_events=0,
                 dispatched_events=0,
                 run_steps=0,
@@ -278,6 +285,7 @@ def build_runtime_supervisor(
         run_store=run_store,
         run_engine=run_engine,
         state_store=RuntimeStateStore(database_path),
+        execution_control=ExecutionControlStore(database_path),
         worker_id=worker_id,
         min_free_disk_bytes=min_free_disk_bytes,
     )
