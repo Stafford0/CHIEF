@@ -66,8 +66,8 @@ def _default_transport(
             dict(exc.headers.items()),
             (time.perf_counter() - started) * 1000,
         )
-    except URLError as exc:
-        raise ConnectionError(f"Gmail draft request failed: {exc.reason}") from exc
+    except (URLError, TimeoutError, OSError) as exc:
+        raise ConnectionError(f"Gmail draft request failed: {exc}") from exc
 
 
 class GmailDraftConnector:
@@ -128,10 +128,15 @@ class GmailDraftConnector:
     ) -> tuple[Any, Mapping[str, str], float]:
         url = f"{self._api_base}{path}"
         if query:
-            url = f"{url}?{urlencode({k: v for k, v in query.items() if v is not None}, doseq=True)}"
+            params = {key: value for key, value in query.items() if value is not None}
+            url = f"{url}?{urlencode(params, doseq=True)}"
         body = None
         if payload is not None:
-            body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            body = json.dumps(
+                payload,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
         status, response, headers, latency_ms = self._transport(
             method,
             url,
@@ -181,7 +186,8 @@ class GmailDraftConnector:
         allowed = {"to", "subject", "body"}
         extra = set(payload) - allowed
         if extra:
-            raise ValueError("Gmail draft payload contains unsupported fields: " + ", ".join(sorted(extra)))
+            names = ", ".join(sorted(extra))
+            raise ValueError(f"Gmail draft payload contains unsupported fields: {names}")
         to = payload.get("to")
         subject = payload.get("subject")
         body = payload.get("body")
@@ -308,7 +314,7 @@ class GmailDraftConnector:
                     external_id=draft_id,
                 )
 
-            response, rate_headers, _ = self._request(
+            response, _, _ = self._request(
                 "POST",
                 "/users/me/drafts",
                 payload={"message": {"raw": self._raw_message(to, subject, body, message_id)}},
@@ -330,7 +336,6 @@ class GmailDraftConnector:
                 idempotency=idempotency,
                 recovered=False,
             )
-            del rate_headers
             return ConnectorWriteResult(
                 success=True,
                 idempotency=idempotency,
