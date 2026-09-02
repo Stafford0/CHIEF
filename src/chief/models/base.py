@@ -31,9 +31,12 @@ class RouteRequirements:
     vision: bool = False
     audio: bool = False
     max_cost_tier: int | None = None
+    cloud_authorized: bool = False
 
     def accepts(self, capabilities: ModelCapabilities) -> bool:
         if capabilities.privacy not in self.allowed_privacy:
+            return False
+        if capabilities.privacy == ModelPrivacy.CLOUD and not self.cloud_authorized:
             return False
         for field_name in ("structured_output", "tool_calling", "streaming", "vision", "audio"):
             if getattr(self, field_name) and not getattr(capabilities, field_name):
