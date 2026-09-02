@@ -7,7 +7,13 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from chief.cofounder import CanonicalBriefing, build_canonical_briefing
-from chief.operator import EventRecoveryAction, OperatorRecoveryService, OperatorStatus
+from chief.operator import (
+    EventRecoveryAction,
+    OperatorRecoveryService,
+    OperatorStatus,
+    OperatorTrace,
+    OperatorTraceService,
+)
 from chief.release import SchemaCompatibilityReport, SchemaCompatibilityService
 
 
@@ -28,6 +34,7 @@ def create_cofounder_router(*, database_path: str | Path) -> APIRouter:
     router = APIRouter(tags=["cofounder"])
     recovery = OperatorRecoveryService(database_path)
     schema = SchemaCompatibilityService(database_path)
+    traces = OperatorTraceService(database_path)
 
     @router.get("/cofounder/briefing", response_model=CanonicalBriefing)
     def canonical_briefing(request: Request, limit: int = 7) -> CanonicalBriefing:
@@ -49,6 +56,27 @@ def create_cofounder_router(*, database_path: str | Path) -> APIRouter:
     def schema_compatibility(request: Request) -> SchemaCompatibilityReport:
         _actor(request)
         return schema.inspect()
+
+    @router.get("/operator/trace", response_model=OperatorTrace)
+    def operator_trace(
+        request: Request,
+        request_id: str | None = None,
+        session_id: UUID | None = None,
+        proposal_id: UUID | None = None,
+        run_id: UUID | None = None,
+        audit_limit: int = 1_000,
+    ) -> OperatorTrace:
+        try:
+            return traces.build(
+                actor_id=_actor(request),
+                request_id=request_id,
+                session_id=session_id,
+                proposal_id=proposal_id,
+                run_id=run_id,
+                audit_limit=audit_limit,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @router.get("/operator/dead-letters")
     def dead_letters(request: Request, limit: int = 100):
