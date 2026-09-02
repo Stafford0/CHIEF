@@ -33,7 +33,7 @@ def _csv_env(name: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class Settings:
-    """Validated runtime settings; secrets stay in the environment."""
+    """Validated runtime settings; secrets stay outside the settings object."""
 
     environment: str = "development"
     ollama_url: str = "http://127.0.0.1:11434"
@@ -42,6 +42,10 @@ class Settings:
     ultron_enabled: bool = True
     model_timeout_seconds: int = 120
     max_model_response_bytes: int = 2_000_000
+    cloud_model_fallback_enabled: bool = False
+    openai_model: str | None = None
+    anthropic_model: str | None = None
+    anthropic_max_tokens: int = 4096
     cors_origins: tuple[str, ...] = ("http://127.0.0.1:5173", "http://localhost:5173")
     allow_private_lan_ui: bool = False
     api_token: str | None = None
@@ -60,6 +64,9 @@ class Settings:
         trusted_hosts = _csv_env("CHIEF_TRUSTED_HOSTS")
         github_repositories = _csv_env("CHIEF_GITHUB_REPOSITORIES")
         github_token = os.getenv("CHIEF_GITHUB_TOKEN", "").strip() or None
+        openai_model = os.getenv("CHIEF_OPENAI_MODEL", "").strip() or None
+        anthropic_model = os.getenv("CHIEF_ANTHROPIC_MODEL", "").strip() or None
+        cloud_fallback = _bool_env("CHIEF_CLOUD_MODEL_FALLBACK_ENABLED", False)
         if api_token is not None and len(api_token.encode("utf-8")) < 32:
             raise ValueError("CHIEF_API_TOKEN must be at least 32 bytes.")
         if lan and api_token is None:
@@ -71,6 +78,10 @@ class Settings:
                 part.strip() for part in repository.split("/", maxsplit=1)
             ):
                 raise ValueError("CHIEF_GITHUB_REPOSITORIES entries must use owner/name form.")
+        if cloud_fallback and openai_model is None and anthropic_model is None:
+            raise ValueError(
+                "Cloud fallback requires CHIEF_OPENAI_MODEL and/or CHIEF_ANTHROPIC_MODEL."
+            )
         return cls(
             environment=os.getenv("CHIEF_ENVIRONMENT", "development"),
             ollama_url=os.getenv("CHIEF_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/"),
@@ -85,6 +96,12 @@ class Settings:
             ),
             max_model_response_bytes=_int_env(
                 "CHIEF_MAX_MODEL_RESPONSE_BYTES", 2_000_000, minimum=1024, maximum=20_000_000
+            ),
+            cloud_model_fallback_enabled=cloud_fallback,
+            openai_model=openai_model,
+            anthropic_model=anthropic_model,
+            anthropic_max_tokens=_int_env(
+                "CHIEF_ANTHROPIC_MAX_TOKENS", 4096, minimum=1, maximum=200_000
             ),
             cors_origins=origins or cls.cors_origins,
             allow_private_lan_ui=lan,
