@@ -13,6 +13,7 @@ from chief.integrations.evidence_plane import BusinessEvidencePlane
 from chief.integrations.github import GitHubReadOnlyConnector
 from chief.integrations.gmail import GmailReadOnlyConnector
 from chief.integrations.google_calendar import GoogleCalendarReadOnlyConnector
+from chief.integrations.parcelsignals import ParcelSignalsReadOnlyConnector
 from chief.integrations.registry import ConnectorRegistry
 from chief.integrations.stripe import StripeReadOnlyConnector
 
@@ -55,6 +56,14 @@ def create_operating_router(*args: Any, **kwargs: Any):
         registry.register(
             StripeReadOnlyConnector(
                 api_key_provider=lambda: _secret("CHIEF_STRIPE_RESTRICTED_KEY"),
+            )
+        )
+    parcelsignals_url = os.getenv("CHIEF_PARCELSIGNALS_SUPABASE_URL", "").strip()
+    if parcelsignals_url and _secret("CHIEF_PARCELSIGNALS_SUPABASE_SECRET") is not None:
+        registry.register(
+            ParcelSignalsReadOnlyConnector(
+                supabase_url=parcelsignals_url,
+                secret_provider=lambda: _secret("CHIEF_PARCELSIGNALS_SUPABASE_SECRET"),
             )
         )
 
