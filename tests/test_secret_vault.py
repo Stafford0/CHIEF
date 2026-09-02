@@ -73,7 +73,7 @@ def test_default_vault_fails_closed_off_windows(tmp_path, monkeypatch) -> None:
         EncryptedSecretStore(tmp_path / "chief.db")
 
 
-def test_secret_api_returns_metadata_only(tmp_path) -> None:
+def _secret_client(tmp_path):
     database = tmp_path / "chief.db"
     store = EncryptedSecretStore(database, cipher=TestCipher())
     audit = SQLiteAuditLog(database)
@@ -86,7 +86,11 @@ def test_secret_api_returns_metadata_only(tmp_path) -> None:
         return await call_next(request)
 
     app.include_router(create_secrets_router(secret_store=store, audit_log=audit))
-    client = TestClient(app)
+    return TestClient(app), store, audit
+
+
+def test_secret_api_returns_metadata_only(tmp_path) -> None:
+    client, store, audit = _secret_client(tmp_path)
     secret = "never-return-me"
 
     written = client.put("/secrets/OPENAI_API_KEY", json={"value": secret})
@@ -109,3 +113,35 @@ def test_secret_api_returns_metadata_only(tmp_path) -> None:
 
     audit_payload = json.dumps([event.metadata for event in audit.events()], default=str)
     assert secret not in audit_payload
+
+
+def test_secret_api_supports_explicit_rotation_and_revocation(tmp_path) -> None:
+    client, store, audit = _secret_client(tmp_path)
+    first = "credential-generation-one"
+    second = "credential-generation-two"
+    assert client.put("/secrets/CHIEF_GITHUB_TOKEN", json={"value": first}).status_code == 200
+
+    rotated = client.post(
+        "/secrets/CHIEF_GITHUB_TOKEN/rotate",
+        json={"value": second},
+    )
+    assert rotated.status_code == 200
+    assert store.get("CHIEF_GITHUB_TOKEN") == second
+    assert first not in json.dumps(rotated.json())
+    assert second not in json.dumps(rotated.json())
+
+    revoked = client.post(
+        "/secrets/CHIEF_GITHUB_TOKEN/revoke",
+        json={"reason": "credential was replaced at the provider"},
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["revoked"] is True
+    assert store.get("CHIEF_GITHUB_TOKEN") is None
+
+    events = audit.events()
+    decisions = [event.decision for event in events]
+    assert "rotated" in decisions
+    assert "revoked" in decisions
+    audit_payload = json.dumps([event.metadata for event in events], default=str)
+    assert first not in audit_payload
+    assert second not in audit_payload

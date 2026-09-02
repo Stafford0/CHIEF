@@ -10,6 +10,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from chief.voice import (
     AudioEncoding,
     AudioFrame,
+    LocalVoiceActivityDetector,
     VoiceCancelled,
     VoiceSessionCoordinator,
     VoiceSessionEvent,
@@ -71,10 +72,13 @@ def create_voice_router(
             "binary_audio_input": True,
             "streaming_transcripts": True,
             "streaming_audio_output": True,
+            "local_vad_telemetry": True,
+            "vad_authorizes_actions": False,
             "cancellation": True,
             "raw_audio_retained": False,
             "wake_word": False,
             "full_duplex_barge_in": False,
+            "sensitive_action_voice_approval": False,
         }
 
     @router.websocket("/stream")
@@ -115,8 +119,10 @@ def create_voice_router(
         voice = start.get("voice")
         language = str(language) if language is not None else None
         voice = str(voice) if voice is not None else None
+        vad_telemetry = start.get("vad_telemetry", False) is True
 
         coordinator = coordinator_factory()
+        vad = LocalVoiceActivityDetector()
         queue: asyncio.Queue[AudioFrame | None] = asyncio.Queue(maxsize=64)
         sequence = 0
 
@@ -152,15 +158,26 @@ def create_voice_router(
                     raise WebSocketDisconnect(int(message.get("code") or 1000))
                 data = message.get("bytes")
                 if data is not None:
-                    await queue.put(
-                        AudioFrame(
-                            data=data,
-                            sequence=sequence,
-                            sample_rate_hz=sample_rate_hz,
-                            channels=channels,
-                            encoding=encoding,
-                        )
+                    frame = AudioFrame(
+                        data=data,
+                        sequence=sequence,
+                        sample_rate_hz=sample_rate_hz,
+                        channels=channels,
+                        encoding=encoding,
                     )
+                    if vad_telemetry:
+                        activity = vad.inspect(frame)
+                        if activity is not None:
+                            await websocket.send_json(
+                                {
+                                    "type": "vad",
+                                    "sequence": activity.sequence,
+                                    "speech": activity.speech,
+                                    "level": round(activity.level, 6),
+                                    "processing_location": "on_device",
+                                }
+                            )
+                    await queue.put(frame)
                     sequence += 1
                     continue
                 text = message.get("text")

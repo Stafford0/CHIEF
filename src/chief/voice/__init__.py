@@ -21,6 +21,7 @@ from chief.voice.state_machine import (
     VoiceStateMachine,
     VoiceTransition,
 )
+from chief.voice.vad import LocalVoiceActivityDetector, VoiceActivity
 
 __all__ = [
     "LEGAL_TRANSITIONS",
@@ -29,11 +30,13 @@ __all__ = [
     "AudioFrame",
     "CancellationToken",
     "InvalidVoiceTransition",
+    "LocalVoiceActivityDetector",
     "SpeechSynthesisRequest",
     "SpeechToTextProvider",
     "TextToSpeechProvider",
     "TranscriptEvent",
     "TranscriptKind",
+    "VoiceActivity",
     "VoiceCancelled",
     "VoicePrivacyPolicy",
     "VoiceProcessingLocation",

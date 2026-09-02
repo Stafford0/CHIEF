@@ -9,6 +9,7 @@ from typing import Any
 
 from chief.api.approvals import create_approvals_router
 from chief.api.browser import create_browser_router
+from chief.api.cofounder import create_cofounder_router
 from chief.api.integrations import create_integrations_router
 from chief.api.models import create_models_router
 from chief.api.notification_delivery import create_notification_delivery_router
@@ -17,6 +18,7 @@ from chief.api.portfolio import create_portfolio_router
 from chief.api.secrets import create_secrets_router
 from chief.api.voice import create_voice_router
 from chief.audit.sqlite import SQLiteAuditLog
+from chief.browser.capture import PlaywrightScreenshotDriver, ScreenshotCaptureService
 from chief.browser.research import BrowserResearchService, PlaywrightReadOnlyDriver
 from chief.core.config import Settings
 from chief.core.execution_control import ExecutionControlStore
@@ -76,6 +78,7 @@ def create_operating_router(*args: Any, **kwargs: Any):
     execution_control = kwargs.pop("execution_control", None)
     secret_store = kwargs.pop("secret_store", None)
     browser_service = kwargs.pop("browser_service", None)
+    screenshot_capture_service = kwargs.pop("screenshot_capture_service", None)
     voice_coordinator_factory = kwargs.pop("voice_coordinator_factory", None)
     configured_execution_enabled = bool(kwargs.pop("configured_execution_enabled", True))
 
@@ -120,6 +123,7 @@ def create_operating_router(*args: Any, **kwargs: Any):
             )
         )
     if secret_resolver.get("CHIEF_GMAIL_ACCESS_TOKEN") is not None:
+
         def gmail_token_provider() -> str | None:
             return secret_resolver.get("CHIEF_GMAIL_ACCESS_TOKEN")
 
@@ -177,7 +181,11 @@ def create_operating_router(*args: Any, **kwargs: Any):
         )
     )
     router.include_router(
-        create_models_router(settings=settings, secret_getter=secret_resolver.get)
+        create_models_router(
+            settings=settings,
+            secret_getter=secret_resolver.get,
+            database_path=database_path,
+        )
     )
 
     smtp_host = os.getenv("CHIEF_SMTP_HOST", "").strip()
@@ -205,8 +213,17 @@ def create_operating_router(*args: Any, **kwargs: Any):
     )
 
     browser_service = browser_service or BrowserResearchService(PlaywrightReadOnlyDriver())
-    router.include_router(create_browser_router(service=browser_service))
+    screenshot_capture_service = screenshot_capture_service or ScreenshotCaptureService(
+        PlaywrightScreenshotDriver()
+    )
+    router.include_router(
+        create_browser_router(
+            service=browser_service,
+            capture_service=screenshot_capture_service,
+        )
+    )
     router.include_router(create_voice_router(coordinator_factory=voice_coordinator_factory))
+    router.include_router(create_cofounder_router(database_path=database_path))
 
     if secret_store is not None:
         router.include_router(
@@ -221,6 +238,7 @@ def create_operating_router(*args: Any, **kwargs: Any):
 __all__ = [
     "create_approvals_router",
     "create_browser_router",
+    "create_cofounder_router",
     "create_integrations_router",
     "create_models_router",
     "create_notification_delivery_router",
