@@ -2,6 +2,7 @@
 
 from .base import Connector
 from .github import GitHubReadOnlyConnector
+from .gmail_drafts import GmailDraftConnector
 from .registry import (
     ConnectorAlreadyRegistered,
     ConnectorNotRegistered,
@@ -51,6 +52,7 @@ __all__ = [
     "EvidenceSensitivity",
     "EvidenceSource",
     "GitHubReadOnlyConnector",
+    "GmailDraftConnector",
     "IdempotencyMetadata",
     "RateLimitMetadata",
     "ScopeAccess",

@@ -12,6 +12,18 @@ class ToolRisk(str, Enum):
     SENSITIVE = "sensitive"
 
 
+@dataclass(frozen=True, slots=True)
+class ToolExecutionContext:
+    """Authenticated execution metadata supplied by CHIEF, never by model arguments."""
+
+    actor_id: str | None = None
+    request_id: str | None = None
+    session_id: str | None = None
+    run_id: str | None = None
+    step_id: str | None = None
+    proposal_id: str | None = None
+
+
 @dataclass(frozen=True)
 class ToolDefinition:
     """Metadata describing a tool available to CHIEF."""
@@ -53,6 +65,16 @@ class Tool(ABC):
     ) -> ToolResult:
         """Execute the tool using validated arguments."""
 
+    def execute_with_context(
+        self,
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+    ) -> ToolResult:
+        """Execute with authenticated context; ordinary tools ignore it by default."""
+
+        del context
+        return self.execute(arguments)
+
     def validate(
         self,
         arguments: dict[str, Any],
@@ -65,12 +87,16 @@ class Tool(ABC):
     def run(
         self,
         arguments: dict[str, Any],
+        *,
+        context: ToolExecutionContext | None = None,
     ) -> ToolResult:
         """Validate and execute the tool."""
 
         try:
             self.validate(arguments)
-            return self.execute(arguments)
+            if context is None:
+                return self.execute(arguments)
+            return self.execute_with_context(arguments, context)
 
         except Exception as exc:  # noqa: BLE001 - tool gateway must contain adapter failures
             return ToolResult(

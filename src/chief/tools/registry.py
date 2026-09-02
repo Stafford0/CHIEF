@@ -5,7 +5,7 @@ from typing import Any
 
 from chief.audit.log import AuditEvent, AuditLog
 from chief.guard.policy import PolicyDecision, ToolPolicy
-from chief.tools.base import Tool, ToolDefinition, ToolResult
+from chief.tools.base import Tool, ToolDefinition, ToolExecutionContext, ToolResult
 
 
 class ToolRegistry:
@@ -150,7 +150,15 @@ class ToolRegistry:
             )
             return result
 
-        result = tool.run(arguments)
+        execution_context = ToolExecutionContext(
+            actor_id=context.get("actor_id"),
+            request_id=context.get("request_id"),
+            session_id=context.get("session_id"),
+            run_id=context.get("run_id"),
+            step_id=context.get("step_id"),
+            proposal_id=context.get("proposal_id"),
+        )
+        result = tool.run(arguments, context=execution_context)
         result_digest = hashlib.sha256(
             json.dumps(
                 {

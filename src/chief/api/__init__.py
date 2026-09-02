@@ -24,12 +24,15 @@ from chief.core.sqlite_session_store import SQLiteSessionStore
 from chief.integrations.evidence_plane import BusinessEvidencePlane
 from chief.integrations.github import GitHubReadOnlyConnector
 from chief.integrations.gmail import GmailReadOnlyConnector
+from chief.integrations.gmail_drafts import GmailDraftConnector
 from chief.integrations.google_calendar import GoogleCalendarReadOnlyConnector
 from chief.integrations.parcelsignals import ParcelSignalsReadOnlyConnector
 from chief.integrations.registry import ConnectorRegistry
+from chief.integrations.schema import ConnectorCapability
 from chief.integrations.stripe import StripeReadOnlyConnector
 from chief.notifications.delivery import NotificationDispatcher, SMTPEmailProvider
 from chief.security.secrets import EncryptedSecretStore, SecretResolver
+from chief.tools.connector_write import ConnectorWriteTool
 from chief.tools.registry import create_standard_registry
 
 
@@ -117,11 +120,11 @@ def create_operating_router(*args: Any, **kwargs: Any):
             )
         )
     if secret_resolver.get("CHIEF_GMAIL_ACCESS_TOKEN") is not None:
-        registry.register(
-            GmailReadOnlyConnector(
-                token_provider=lambda: secret_resolver.get("CHIEF_GMAIL_ACCESS_TOKEN"),
-            )
-        )
+        def gmail_token_provider() -> str | None:
+            return secret_resolver.get("CHIEF_GMAIL_ACCESS_TOKEN")
+
+        registry.register(GmailReadOnlyConnector(token_provider=gmail_token_provider))
+        registry.register(GmailDraftConnector(token_provider=gmail_token_provider))
     if secret_resolver.get("CHIEF_GOOGLE_CALENDAR_ACCESS_TOKEN") is not None:
         registry.register(
             GoogleCalendarReadOnlyConnector(
@@ -148,6 +151,9 @@ def create_operating_router(*args: Any, **kwargs: Any):
                 ),
             )
         )
+
+    if any(ConnectorCapability.WRITE in manifest.capabilities for manifest in registry.manifests()):
+        tool_registry.register(ConnectorWriteTool(registry))
 
     evidence_plane = BusinessEvidencePlane(
         registry=registry,
@@ -200,9 +206,7 @@ def create_operating_router(*args: Any, **kwargs: Any):
 
     browser_service = browser_service or BrowserResearchService(PlaywrightReadOnlyDriver())
     router.include_router(create_browser_router(service=browser_service))
-    router.include_router(
-        create_voice_router(coordinator_factory=voice_coordinator_factory)
-    )
+    router.include_router(create_voice_router(coordinator_factory=voice_coordinator_factory))
 
     if secret_store is not None:
         router.include_router(
