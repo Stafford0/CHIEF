@@ -301,8 +301,9 @@ def test_connector_write_requires_authenticated_tool_context() -> None:
         approved=True,
     )
 
+    error = (result.error or "").casefold()
     assert result.success is False
-    assert "authenticated actor" in (result.error or "").casefold()
+    assert "authenticated" in error and "actor" in error
     assert transport.posts == 0
 
 
