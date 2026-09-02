@@ -119,6 +119,7 @@ def create_voice_router(
         voice = start.get("voice")
         language = str(language) if language is not None else None
         voice = str(voice) if voice is not None else None
+        vad_telemetry = start.get("vad_telemetry", False) is True
 
         coordinator = coordinator_factory()
         vad = LocalVoiceActivityDetector()
@@ -164,17 +165,18 @@ def create_voice_router(
                         channels=channels,
                         encoding=encoding,
                     )
-                    activity = vad.inspect(frame)
-                    if activity is not None:
-                        await websocket.send_json(
-                            {
-                                "type": "vad",
-                                "sequence": activity.sequence,
-                                "speech": activity.speech,
-                                "level": round(activity.level, 6),
-                                "processing_location": "on_device",
-                            }
-                        )
+                    if vad_telemetry:
+                        activity = vad.inspect(frame)
+                        if activity is not None:
+                            await websocket.send_json(
+                                {
+                                    "type": "vad",
+                                    "sequence": activity.sequence,
+                                    "speech": activity.speech,
+                                    "level": round(activity.level, 6),
+                                    "processing_location": "on_device",
+                                }
+                            )
                     await queue.put(frame)
                     sequence += 1
                     continue
