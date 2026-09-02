@@ -30,8 +30,26 @@ class BackupManifest:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class StagedRestore:
+    database: str
+    staged: str
+    source_backup: str
+    staged_sha256: str
+    created_at: datetime
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "database": self.database,
+            "staged": self.staged,
+            "source_backup": self.source_backup,
+            "staged_sha256": self.staged_sha256,
+            "created_at": self.created_at.isoformat(),
+        }
+
+
 class SQLiteRecoveryService:
-    """Create verified online SQLite backups and stage atomic restores."""
+    """Create verified online backups and stage restores for offline activation."""
 
     def __init__(self, database_path: str | Path = "data/chief.db") -> None:
         self.database_path = Path(database_path)
@@ -86,7 +104,10 @@ class SQLiteRecoveryService:
             sqlite_integrity=integrity,
         )
         manifest_path = backup_path.with_suffix(backup_path.suffix + ".manifest.json")
-        manifest_path.write_text(json.dumps(manifest.as_dict(), indent=2, sort_keys=True), encoding="utf-8")
+        manifest_path.write_text(
+            json.dumps(manifest.as_dict(), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
         return manifest
 
     def verify_backup(self, backup_path: str | Path) -> BackupManifest:
@@ -109,19 +130,43 @@ class SQLiteRecoveryService:
             sqlite_integrity=integrity,
         )
 
-    def restore_backup(self, backup_path: str | Path, *, preserve_current: bool = True) -> Path | None:
+    def stage_restore(self, backup_path: str | Path) -> StagedRestore:
+        """Verify and copy a backup beside the live DB without activating it."""
+
         backup_path = Path(backup_path)
         self.verify_backup(backup_path)
-        staged = self.database_path.with_suffix(self.database_path.suffix + ".restore-staged")
-        staged.unlink(missing_ok=True)
-        shutil.copy2(backup_path, staged)
+        staged = self.database_path.with_suffix(self.database_path.suffix + ".restore-ready")
+        staged_partial = staged.with_suffix(staged.suffix + ".partial")
+        marker = staged.with_suffix(staged.suffix + ".json")
+        staged_partial.unlink(missing_ok=True)
+        shutil.copy2(backup_path, staged_partial)
+        self._integrity(staged_partial)
+        digest = self._digest(staged_partial)
+        os.replace(staged_partial, staged)
+        restore = StagedRestore(
+            database=str(self.database_path.resolve()),
+            staged=str(staged.resolve()),
+            source_backup=str(backup_path.resolve()),
+            staged_sha256=digest,
+            created_at=datetime.now(UTC),
+        )
+        marker.write_text(json.dumps(restore.as_dict(), indent=2, sort_keys=True), encoding="utf-8")
+        return restore
+
+    def verify_staged_restore(self) -> StagedRestore:
+        staged = self.database_path.with_suffix(self.database_path.suffix + ".restore-ready")
+        marker = staged.with_suffix(staged.suffix + ".json")
+        if not marker.is_file():
+            raise FileNotFoundError(f"Staged restore marker is missing: {marker}")
+        raw = json.loads(marker.read_text(encoding="utf-8"))
         self._integrity(staged)
-        previous: Path | None = None
-        if self.database_path.exists() and preserve_current:
-            timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-            previous = self.database_path.with_suffix(self.database_path.suffix + f".pre-restore-{timestamp}")
-            shutil.copy2(self.database_path, previous)
-            self._integrity(previous)
-        os.replace(staged, self.database_path)
-        self._integrity(self.database_path)
-        return previous
+        digest = self._digest(staged)
+        if digest != str(raw.get("staged_sha256") or ""):
+            raise RuntimeError("Staged restore SHA-256 does not match its marker.")
+        return StagedRestore(
+            database=str(raw["database"]),
+            staged=str(staged.resolve()),
+            source_backup=str(raw["source_backup"]),
+            staged_sha256=digest,
+            created_at=datetime.fromisoformat(str(raw["created_at"])),
+        )
