@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from chief.api.approvals import create_approvals_router
+from chief.api.browser import create_browser_router
 from chief.api.integrations import create_integrations_router
 from chief.api.models import create_models_router
 from chief.api.notification_delivery import create_notification_delivery_router
@@ -15,6 +16,7 @@ from chief.api.operating import create_operating_router as _create_operating_rou
 from chief.api.portfolio import create_portfolio_router
 from chief.api.secrets import create_secrets_router
 from chief.audit.sqlite import SQLiteAuditLog
+from chief.browser.research import BrowserResearchService, PlaywrightReadOnlyDriver
 from chief.core.config import Settings
 from chief.core.execution_control import ExecutionControlStore
 from chief.core.sqlite_session_store import SQLiteSessionStore
@@ -69,6 +71,7 @@ def create_operating_router(*args: Any, **kwargs: Any):
     tool_registry = kwargs.pop("tool_registry", None)
     execution_control = kwargs.pop("execution_control", None)
     secret_store = kwargs.pop("secret_store", None)
+    browser_service = kwargs.pop("browser_service", None)
     configured_execution_enabled = bool(kwargs.pop("configured_execution_enabled", True))
 
     router = _create_operating_router(*args, **kwargs)
@@ -193,6 +196,9 @@ def create_operating_router(*args: Any, **kwargs: Any):
         )
     )
 
+    browser_service = browser_service or BrowserResearchService(PlaywrightReadOnlyDriver())
+    router.include_router(create_browser_router(service=browser_service))
+
     if secret_store is not None:
         router.include_router(
             create_secrets_router(
@@ -205,6 +211,7 @@ def create_operating_router(*args: Any, **kwargs: Any):
 
 __all__ = [
     "create_approvals_router",
+    "create_browser_router",
     "create_integrations_router",
     "create_models_router",
     "create_notification_delivery_router",
