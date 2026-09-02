@@ -120,9 +120,11 @@ def create_operating_router(*args: Any, **kwargs: Any):
             )
         )
     if secret_resolver.get("CHIEF_GMAIL_ACCESS_TOKEN") is not None:
-        token_provider = lambda: secret_resolver.get("CHIEF_GMAIL_ACCESS_TOKEN")
-        registry.register(GmailReadOnlyConnector(token_provider=token_provider))
-        registry.register(GmailDraftConnector(token_provider=token_provider))
+        def gmail_token_provider() -> str | None:
+            return secret_resolver.get("CHIEF_GMAIL_ACCESS_TOKEN")
+
+        registry.register(GmailReadOnlyConnector(token_provider=gmail_token_provider))
+        registry.register(GmailDraftConnector(token_provider=gmail_token_provider))
     if secret_resolver.get("CHIEF_GOOGLE_CALENDAR_ACCESS_TOKEN") is not None:
         registry.register(
             GoogleCalendarReadOnlyConnector(
