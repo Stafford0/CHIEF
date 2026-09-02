@@ -9,6 +9,7 @@ from typing import Any
 
 from chief.api.approvals import create_approvals_router
 from chief.api.integrations import create_integrations_router
+from chief.api.models import create_models_router
 from chief.api.operating import create_operating_router as _create_operating_router
 from chief.api.portfolio import create_portfolio_router
 from chief.audit.sqlite import SQLiteAuditLog
@@ -126,12 +127,14 @@ def create_operating_router(*args: Any, **kwargs: Any):
             ),
         )
     )
+    router.include_router(create_models_router(settings=settings))
     return router
 
 
 __all__ = [
     "create_approvals_router",
     "create_integrations_router",
+    "create_models_router",
     "create_operating_router",
     "create_portfolio_router",
 ]
