@@ -34,3 +34,12 @@ def test_pwa_pairing_token_is_session_scoped_and_never_sent_over_remote_http() -
     assert "localStorage" not in source
     assert 'target.protocol !== "https:" && !loopback' in source
     assert "Authorization: `Bearer ${bearerToken}`" in source
+
+
+def test_production_pwa_uses_same_origin_api_proxy() -> None:
+    source = (
+        Path(__file__).parents[1] / "apps" / "chief-ui" / "src" / "main.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "import.meta.env.PROD" in source
+    assert "`${window.location.origin}/api`" in source
