@@ -194,7 +194,9 @@ class SchemaCompatibilityService:
         unsafe: list[str] = []
         for component, version in applied.items():
             target = target_versions.get(component)
-            if target is not None and version > target:
+            if target is None:
+                unsafe.append(f"{component} v{version} is unknown to rollback target")
+            elif version > target:
                 unsafe.append(f"{component} v{version} > rollback target v{target}")
         if unsafe:
             raise RuntimeError("Rollback is unsafe: " + "; ".join(sorted(unsafe)))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -128,6 +129,8 @@ if win32serviceutil is not None:
         _svc_description_ = (
             "Advances CHIEF durable schedules, events, and verified run steps continuously."
         )
+        _exe_name_ = sys.executable
+        _exe_args_ = "-m chief.runtime.windows_service"
 
         def __init__(self, args: Any) -> None:
             super().__init__(args)
@@ -209,7 +212,15 @@ def main() -> int:
         raise RuntimeError(
             "The Windows Service wrapper requires the optional 'windows' dependency (pywin32)."
         )
-    win32serviceutil.HandleCommandLine(ChiefRuntimeService)
+    if len(sys.argv) == 1:
+        servicemanager.Initialize()
+        servicemanager.PrepareToHostSingle(ChiefRuntimeService)
+        servicemanager.StartServiceCtrlDispatcher()
+    else:
+        win32serviceutil.HandleCommandLine(
+            ChiefRuntimeService,
+            serviceClassString="chief.runtime.windows_service.ChiefRuntimeService",
+        )
     return 0
 
 
