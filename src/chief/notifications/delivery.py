@@ -122,62 +122,61 @@ class NotificationDispatcher:
             if provider is None:
                 continue
             previous = [attempt for attempt in existing_attempts if attempt.channel is channel]
-            for attempt in previous:
-                if any(
-                    receipt.status is DeliveryStatus.DELIVERED
-                    for receipt in self.store.delivery_receipts(attempt.id)
-                ):
-                    continue
-                break
-            else:
-                attempt_number = len(previous) + 1
-                idempotency_key = f"notify:{notification.id}:{channel.value}:{attempt_number}"
-                try:
-                    result = provider.send(notification)
-                except Exception as exc:
-                    attempt = self.store.record_delivery_attempt(
-                        DeliveryAttempt(
-                            notification_id=notification.id,
-                            channel=channel,
-                            attempt_number=attempt_number,
-                            idempotency_key=idempotency_key,
-                            status=DeliveryStatus.FAILED,
-                            attempted_at=now,
-                            completed_at=now,
-                            error=str(exc) or exc.__class__.__name__,
-                        )
-                    )
-                    receipt = self.store.record_delivery_receipt(
-                        DeliveryReceipt(
-                            attempt_id=attempt.id,
-                            idempotency_key=f"{idempotency_key}:receipt",
-                            status=DeliveryStatus.FAILED,
-                            received_at=now,
-                            detail=attempt.error,
-                        )
-                    )
-                    receipts.append(receipt)
-                    continue
+            already_delivered = any(
+                receipt.status is DeliveryStatus.DELIVERED
+                for attempt in previous
+                for receipt in self.store.delivery_receipts(attempt.id)
+            )
+            if already_delivered:
+                continue
+            attempt_number = len(previous) + 1
+            idempotency_key = f"notify:{notification.id}:{channel.value}:{attempt_number}"
+            try:
+                result = provider.send(notification)
+            except Exception as exc:
                 attempt = self.store.record_delivery_attempt(
                     DeliveryAttempt(
                         notification_id=notification.id,
                         channel=channel,
                         attempt_number=attempt_number,
                         idempotency_key=idempotency_key,
-                        status=DeliveryStatus.SENT,
+                        status=DeliveryStatus.FAILED,
                         attempted_at=now,
                         completed_at=now,
+                        error=str(exc) or exc.__class__.__name__,
                     )
                 )
                 receipt = self.store.record_delivery_receipt(
                     DeliveryReceipt(
                         attempt_id=attempt.id,
                         idempotency_key=f"{idempotency_key}:receipt",
-                        status=DeliveryStatus.DELIVERED,
+                        status=DeliveryStatus.FAILED,
                         received_at=now,
-                        provider_reference=result.provider_reference,
-                        detail=result.detail,
+                        detail=attempt.error,
                     )
                 )
                 receipts.append(receipt)
+                continue
+            attempt = self.store.record_delivery_attempt(
+                DeliveryAttempt(
+                    notification_id=notification.id,
+                    channel=channel,
+                    attempt_number=attempt_number,
+                    idempotency_key=idempotency_key,
+                    status=DeliveryStatus.SENT,
+                    attempted_at=now,
+                    completed_at=now,
+                )
+            )
+            receipt = self.store.record_delivery_receipt(
+                DeliveryReceipt(
+                    attempt_id=attempt.id,
+                    idempotency_key=f"{idempotency_key}:receipt",
+                    status=DeliveryStatus.DELIVERED,
+                    received_at=now,
+                    provider_reference=result.provider_reference,
+                    detail=result.detail,
+                )
+            )
+            receipts.append(receipt)
         return receipts
