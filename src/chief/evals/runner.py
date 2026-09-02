@@ -25,6 +25,11 @@ def _contains_all(text: str, markers: list[str]) -> tuple[bool, list[str]]:
     return not missing, missing
 
 
+def _contains_any(text: str, markers: list[str]) -> list[str]:
+    folded = text.casefold()
+    return [marker for marker in markers if marker.casefold() in folded]
+
+
 class EvaluationRunner:
     """Apply deterministic release checks to pre-recorded observations."""
 
@@ -189,6 +194,83 @@ class EvaluationRunner:
                     ),
                     expected=expectation.required_memory_tokens,
                     observed={"missing": missing},
+                )
+            )
+
+        if expectation.forbidden_response_markers:
+            violations = _contains_any(
+                observation.response_text,
+                expectation.forbidden_response_markers,
+            )
+            checks.append(
+                EvaluationCheckResult(
+                    kind=EvaluationCheckKind.FORBIDDEN_RESPONSE_MARKERS,
+                    passed=not violations,
+                    message=(
+                        "No forbidden response markers were present."
+                        if not violations
+                        else "One or more forbidden response markers were present."
+                    ),
+                    expected={"forbidden": expectation.forbidden_response_markers},
+                    observed={"violations": violations},
+                )
+            )
+
+        if expectation.maximum_actions is not None:
+            action_count = len(observation.actions)
+            passed = action_count <= expectation.maximum_actions
+            checks.append(
+                EvaluationCheckResult(
+                    kind=EvaluationCheckKind.ACTION_BUDGET,
+                    passed=passed,
+                    message=(
+                        "Observed actions stayed within the configured budget."
+                        if passed
+                        else "Observed actions exceeded the configured budget."
+                    ),
+                    expected={"maximum_actions": expectation.maximum_actions},
+                    observed={"action_count": action_count, "actions": observation.actions},
+                )
+            )
+
+        if expectation.maximum_attention_items is not None:
+            attention_count = len(observation.attention_items)
+            passed = attention_count <= expectation.maximum_attention_items
+            checks.append(
+                EvaluationCheckResult(
+                    kind=EvaluationCheckKind.ATTENTION_BUDGET,
+                    passed=passed,
+                    message=(
+                        "Founder attention stayed within the configured budget."
+                        if passed
+                        else "Founder attention exceeded the configured budget."
+                    ),
+                    expected={
+                        "maximum_attention_items": expectation.maximum_attention_items
+                    },
+                    observed={
+                        "attention_count": attention_count,
+                        "attention_items": observation.attention_items,
+                    },
+                )
+            )
+
+        if expectation.maximum_response_characters is not None:
+            response_characters = len(observation.response_text)
+            passed = response_characters <= expectation.maximum_response_characters
+            checks.append(
+                EvaluationCheckResult(
+                    kind=EvaluationCheckKind.RESPONSE_LENGTH,
+                    passed=passed,
+                    message=(
+                        "Response length stayed within the configured limit."
+                        if passed
+                        else "Response length exceeded the configured limit."
+                    ),
+                    expected={
+                        "maximum_response_characters": expectation.maximum_response_characters
+                    },
+                    observed={"response_characters": response_characters},
                 )
             )
 
