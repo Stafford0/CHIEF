@@ -94,6 +94,7 @@ class RuntimeSupervisor:
         run_engine: RunEngine,
         state_store: RuntimeStateStore | None = None,
         execution_control: ExecutionControlStore | None = None,
+        configured_execution_enabled: bool = True,
         worker_id: str = "chief-runtime",
         min_free_disk_bytes: int = 512 * 1024 * 1024,
         clock_skew_tolerance_seconds: int = 5,
@@ -118,6 +119,7 @@ class RuntimeSupervisor:
         self.run_engine = run_engine
         self.state_store = state_store or RuntimeStateStore(event_store.database_path)
         self.execution_control = execution_control or ExecutionControlStore(event_store.database_path)
+        self.configured_execution_enabled = bool(configured_execution_enabled)
         self.worker_id = worker_id
         self.min_free_disk_bytes = min_free_disk_bytes
         self.clock_skew_tolerance = timedelta(seconds=clock_skew_tolerance_seconds)
@@ -130,6 +132,8 @@ class RuntimeSupervisor:
 
     def _preflight(self, now: datetime) -> tuple[int, str | None]:
         free_disk = self._free_disk_bytes()
+        if not self.configured_execution_enabled:
+            return free_disk, "execution paused by static configuration"
         execution = self.execution_control.get()
         if not execution.enabled:
             return free_disk, f"execution paused by operator: {execution.reason or 'no reason supplied'}"
@@ -243,6 +247,7 @@ def build_runtime_supervisor(
     database_path: str | Path = "data/chief.db",
     worker_id: str = "chief-runtime",
     min_free_disk_bytes: int = 512 * 1024 * 1024,
+    configured_execution_enabled: bool = True,
 ) -> RuntimeSupervisor:
     database_path = Path(database_path)
     work_store = WorkStore(database_path)
@@ -286,6 +291,7 @@ def build_runtime_supervisor(
         run_engine=run_engine,
         state_store=RuntimeStateStore(database_path),
         execution_control=ExecutionControlStore(database_path),
+        configured_execution_enabled=configured_execution_enabled,
         worker_id=worker_id,
         min_free_disk_bytes=min_free_disk_bytes,
     )
