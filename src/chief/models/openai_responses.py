@@ -58,7 +58,7 @@ class OpenAIResponsesProvider(ModelProvider):
         parts: list[str] = []
         output = payload.get("output")
         if not isinstance(output, list):
-            raise RuntimeError("OpenAI response did not contain an output array.")
+            raise TypeError("OpenAI response did not contain an output array.")
         for item in output:
             if not isinstance(item, dict) or item.get("type") != "message":
                 continue
