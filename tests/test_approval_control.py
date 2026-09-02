@@ -10,10 +10,10 @@ from chief.core.execution_control import ExecutionControlStore
 from chief.core.sqlite_session_store import SQLiteSessionStore
 from chief.core.tool_planner import PlannedToolCall
 from chief.events.scheduler import Scheduler
-from chief.events.schema import Event, Schedule, ScheduleCadence
+from chief.events.schema import Event
 from chief.events.store import EventStore
 from chief.runs import ActionResult, RunEngine, SQLiteRunStore, VerificationStatus
-from chief.runtime.supervisor import RuntimeSupervisor, RuntimeStateStore
+from chief.runtime.supervisor import RuntimeStateStore, RuntimeSupervisor
 from chief.tools.base import Tool, ToolDefinition, ToolResult, ToolRisk
 from chief.tools.registry import ToolRegistry
 
