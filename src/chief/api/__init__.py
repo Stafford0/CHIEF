@@ -179,7 +179,11 @@ def create_operating_router(*args: Any, **kwargs: Any):
         )
     )
     router.include_router(
-        create_models_router(settings=settings, secret_getter=secret_resolver.get)
+        create_models_router(
+            settings=settings,
+            secret_getter=secret_resolver.get,
+            database_path=database_path,
+        )
     )
 
     smtp_host = os.getenv("CHIEF_SMTP_HOST", "").strip()
