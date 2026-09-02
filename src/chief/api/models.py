@@ -74,8 +74,6 @@ def create_models_router(
 
     @router.post("/models/cloud/generate")
     def cloud_generate(payload: CloudGenerateRequest, request: Request) -> dict[str, object]:
-        actor_id = _actor(request)
-        request_id = _request_id(request)
         if not settings.cloud_model_fallback_enabled:
             raise HTTPException(
                 status_code=403,
@@ -86,6 +84,8 @@ def create_models_router(
                 status_code=403,
                 detail="This request did not explicitly authorize cloud transmission.",
             )
+        actor_id = _actor(request) if route_store is not None else "unpersisted"
+        request_id = _request_id(request)
         model_router = build_router()
         if model_router is None:
             raise HTTPException(status_code=503, detail="No configured cloud model provider is available.")
@@ -119,7 +119,7 @@ def create_models_router(
         for provider in model_router.providers:
             provider_name = getattr(provider, "name", provider.__class__.__name__)
             if provider_name == result.provider:
-                selected_privacy = model_router._capabilities(provider).privacy
+                selected_privacy = provider.capabilities.privacy
                 break
         receipt = None
         if route_store is not None:
