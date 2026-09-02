@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from chief.integrations.parcelsignals import ParcelSignalsReadOnlyConnector
-from chief.integrations.schema import ConnectorCapability, IdempotencyMetadata
+from chief.integrations.schema import ConnectorCapability, IdempotencyMetadata, SyncCursor
 
 NOW = datetime(2026, 9, 1, 20, 0, tzinfo=UTC)
 
@@ -61,8 +61,6 @@ def test_parcelsignals_connector_is_read_only_and_cursorless() -> None:
     assert connector.manifest.capabilities == frozenset({ConnectorCapability.READ})
 
     with pytest.raises(ValueError, match="does not use incremental cursors"):
-        from chief.integrations.schema import SyncCursor
-
         connector.read(
             "national.overview.read",
             cursor=SyncCursor(
