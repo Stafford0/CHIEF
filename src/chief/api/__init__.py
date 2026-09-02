@@ -9,6 +9,7 @@ from typing import Any
 
 from chief.api.approvals import create_approvals_router
 from chief.api.browser import create_browser_router
+from chief.api.cofounder import create_cofounder_router
 from chief.api.integrations import create_integrations_router
 from chief.api.models import create_models_router
 from chief.api.notification_delivery import create_notification_delivery_router
@@ -120,6 +121,7 @@ def create_operating_router(*args: Any, **kwargs: Any):
             )
         )
     if secret_resolver.get("CHIEF_GMAIL_ACCESS_TOKEN") is not None:
+
         def gmail_token_provider() -> str | None:
             return secret_resolver.get("CHIEF_GMAIL_ACCESS_TOKEN")
 
@@ -207,6 +209,7 @@ def create_operating_router(*args: Any, **kwargs: Any):
     browser_service = browser_service or BrowserResearchService(PlaywrightReadOnlyDriver())
     router.include_router(create_browser_router(service=browser_service))
     router.include_router(create_voice_router(coordinator_factory=voice_coordinator_factory))
+    router.include_router(create_cofounder_router(database_path=database_path))
 
     if secret_store is not None:
         router.include_router(
@@ -221,6 +224,7 @@ def create_operating_router(*args: Any, **kwargs: Any):
 __all__ = [
     "create_approvals_router",
     "create_browser_router",
+    "create_cofounder_router",
     "create_integrations_router",
     "create_models_router",
     "create_notification_delivery_router",
