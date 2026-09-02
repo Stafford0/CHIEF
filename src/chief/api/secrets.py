@@ -16,6 +16,12 @@ class SecretPutRequest(BaseModel):
     value: str = Field(min_length=1, max_length=1_048_576)
 
 
+class SecretRevokeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=2_000)
+
+
 def _actor(request: Request) -> str:
     actor_id = getattr(request.state, "actor_id", None)
     if not isinstance(actor_id, str) or not actor_id:
@@ -33,7 +39,16 @@ def create_secrets_router(
 
     router = APIRouter(prefix="/secrets", tags=["secrets"])
 
-    def audit(request: Request, name: str, decision: str) -> None:
+    def audit(
+        request: Request,
+        name: str,
+        decision: str,
+        *,
+        extra_metadata: dict[str, str] | None = None,
+    ) -> None:
+        metadata = {"event_type": f"secret.{decision}", "secret_name": name}
+        if extra_metadata:
+            metadata.update(extra_metadata)
         audit_log.record(
             AuditEvent(
                 tool_name="config.secret",
@@ -42,7 +57,7 @@ def create_secrets_router(
                 success=True,
                 request_id=str(request.state.request_id),
                 actor_id=_actor(request),
-                metadata={"event_type": f"secret.{decision}", "secret_name": name},
+                metadata=metadata,
             )
         )
 
@@ -72,6 +87,44 @@ def create_secrets_router(
         if on_change is not None:
             on_change()
         return metadata_json(metadata)
+
+    @router.post("/{name}/rotate")
+    def rotate_secret(name: str, payload: SecretPutRequest, request: Request) -> dict[str, str]:
+        try:
+            previous = secret_store.metadata(name)
+            if previous is None:
+                raise HTTPException(status_code=404, detail="Secret not found; create it before rotation.")
+            metadata = secret_store.put(name, payload.value)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        audit(
+            request,
+            name,
+            "rotated",
+            extra_metadata={"previous_updated_at": previous.updated_at.isoformat()},
+        )
+        if on_change is not None:
+            on_change()
+        return metadata_json(metadata)
+
+    @router.post("/{name}/revoke")
+    def revoke_secret(
+        name: str,
+        payload: SecretRevokeRequest,
+        request: Request,
+    ) -> dict[str, object]:
+        try:
+            deleted = secret_store.delete(name)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Secret not found.")
+        audit(request, name, "revoked", extra_metadata={"reason": payload.reason})
+        if on_change is not None:
+            on_change()
+        return {"name": name, "revoked": True}
 
     @router.delete("/{name}")
     def delete_secret(name: str, request: Request) -> dict[str, object]:
