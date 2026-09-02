@@ -2,13 +2,23 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
 from uuid import UUID
 
 from chief.core.session import ConversationSession, PendingToolCall, SessionMessage
 from chief.core.tool_planner import PlannedToolCall
+
+
+def _is_narrower(original: object, proposed: object) -> bool:
+    """Allow only removal of dictionary fields; existing values cannot change."""
+
+    if isinstance(original, dict) and isinstance(proposed, dict):
+        if not set(proposed).issubset(original):
+            return False
+        return all(_is_narrower(original[key], value) for key, value in proposed.items())
+    return original == proposed
 
 
 class SQLiteSessionStore:
@@ -57,6 +67,16 @@ class SQLiteSessionStore:
                     proposal_id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
                     consumed_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS tool_proposal_decisions (
+                    proposal_id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    owner_id TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    decided_at TEXT NOT NULL,
+                    replacement_proposal_id TEXT
+                );
+                CREATE INDEX IF NOT EXISTS ix_tool_proposal_decisions_owner
+                    ON tool_proposal_decisions(owner_id, decided_at DESC);
                 """
             )
             columns = {
@@ -238,9 +258,93 @@ class SQLiteSessionStore:
             row = connection.execute(query, parameters).fetchone()
         return int(row["count"])
 
+    @staticmethod
+    def _record_decision(
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+        *,
+        owner_id: str,
+        decision: str,
+        replacement_proposal_id: UUID | None = None,
+    ) -> None:
+        decided_at = datetime.now(UTC).isoformat()
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO consumed_tool_proposals(proposal_id, session_id, consumed_at)
+            VALUES (?, ?, ?)
+            """,
+            (row["proposal_id"], row["session_id"], decided_at),
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO tool_proposal_decisions(
+                proposal_id, session_id, owner_id, decision, decided_at, replacement_proposal_id
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["proposal_id"],
+                row["session_id"],
+                owner_id,
+                decision,
+                decided_at,
+                str(replacement_proposal_id) if replacement_proposal_id else None,
+            ),
+        )
+
     def take_pending_tool(
         self,
         session_id: UUID,
+        *,
+        owner_id: str = "local",
+        proposal_id: UUID | None = None,
+        decision: str = "approved",
+    ) -> PendingToolCall | None:
+        session = self.get_or_create(session_id, owner_id=owner_id)
+        query = """
+            SELECT proposal.* FROM pending_tool_proposals AS proposal
+            JOIN conversation_sessions AS session ON session.id = proposal.session_id
+            WHERE proposal.session_id = ? AND session.owner_id = ?
+        """
+        parameters: list[object] = [str(session_id), owner_id]
+        if proposal_id is not None:
+            query += " AND proposal.proposal_id = ?"
+            parameters.append(str(proposal_id))
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(query, parameters).fetchone()
+            if row is None:
+                return None
+            self._record_decision(connection, row, owner_id=owner_id, decision=decision)
+            connection.execute(
+                "DELETE FROM pending_tool_proposals WHERE session_id = ? AND proposal_id = ?",
+                (str(session_id), row["proposal_id"]),
+            )
+        pending = self._pending(row)
+        with session._lock:
+            if session.pending_tool_call is not None and session.pending_tool_call.id == pending.id:
+                session.pending_tool_call = None
+            session.updated_at = datetime.now(UTC)
+        return pending
+
+    def reject_pending_tool(
+        self,
+        session_id: UUID,
+        proposal_id: UUID,
+        *,
+        owner_id: str = "local",
+    ) -> PendingToolCall | None:
+        return self.take_pending_tool(
+            session_id,
+            owner_id=owner_id,
+            proposal_id=proposal_id,
+            decision="rejected",
+        )
+
+    def narrow_pending_tool(
+        self,
+        session_id: UUID,
+        proposal_id: UUID,
+        arguments: dict[str, object],
         *,
         owner_id: str = "local",
     ) -> PendingToolCall | None:
@@ -251,35 +355,62 @@ class SQLiteSessionStore:
                 """
                 SELECT proposal.* FROM pending_tool_proposals AS proposal
                 JOIN conversation_sessions AS session ON session.id = proposal.session_id
-                WHERE proposal.session_id = ? AND session.owner_id = ?
+                WHERE proposal.session_id = ? AND proposal.proposal_id = ? AND session.owner_id = ?
                 """,
-                (str(session_id), owner_id),
+                (str(session_id), str(proposal_id), owner_id),
             ).fetchone()
             if row is None:
                 return None
+            original_arguments = json.loads(row["arguments_json"])
+            if arguments == original_arguments or not _is_narrower(original_arguments, arguments):
+                raise ValueError(
+                    "Narrowed arguments may only remove existing fields; values cannot be changed or added."
+                )
+            replacement = PendingToolCall(
+                call=PlannedToolCall(
+                    intent=row["intent"],
+                    tool_name=row["tool_name"],
+                    arguments=arguments,
+                    description=row["description"],
+                )
+            )
+            self._record_decision(
+                connection,
+                row,
+                owner_id=owner_id,
+                decision="narrowed",
+                replacement_proposal_id=replacement.id,
+            )
+            connection.execute(
+                "DELETE FROM pending_tool_proposals WHERE session_id = ? AND proposal_id = ?",
+                (str(session_id), str(proposal_id)),
+            )
             connection.execute(
                 """
-                INSERT OR IGNORE INTO consumed_tool_proposals(proposal_id, session_id, consumed_at)
-                VALUES (?, ?, ?)
+                INSERT INTO pending_tool_proposals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (row["proposal_id"], str(session_id), datetime.now().astimezone().isoformat()),
+                (
+                    str(session_id),
+                    str(replacement.id),
+                    replacement.call.intent,
+                    replacement.call.tool_name,
+                    json.dumps(replacement.call.arguments, sort_keys=True),
+                    replacement.call.description,
+                    replacement.created_at.isoformat(),
+                    replacement.expires_at.isoformat(),
+                    replacement.digest,
+                ),
             )
-            connection.execute(
-                "DELETE FROM pending_tool_proposals WHERE session_id = ?", (str(session_id),)
-            )
-        pending = self._pending(row)
         with session._lock:
-            session.pending_tool_call = None
-            session.updated_at = datetime.now(session.updated_at.tzinfo)
-        session._notify_change()
-        return pending
+            session.pending_tool_call = replacement
+            session.updated_at = datetime.now(UTC)
+        return replacement
 
-    def pending_tool_calls(self, owner_id: str = "local") -> list[dict[str, str]]:
+    def pending_tool_records(self, owner_id: str = "local") -> list[dict[str, object]]:
         with self._connect() as connection:
             rows = connection.execute(
                 """
-                SELECT proposal.tool_name, proposal.description, proposal.expires_at
-                FROM pending_tool_proposals AS proposal
+                SELECT proposal.* FROM pending_tool_proposals AS proposal
                 JOIN conversation_sessions AS session ON session.id = proposal.session_id
                 WHERE session.owner_id = ? ORDER BY proposal.expires_at
                 """,
@@ -287,13 +418,43 @@ class SQLiteSessionStore:
             ).fetchall()
         return [
             {
-                "name": row["description"],
-                "tool": row["tool_name"],
-                "status": "awaiting approval",
+                "session_id": row["session_id"],
+                "proposal_id": row["proposal_id"],
+                "intent": row["intent"],
+                "tool_name": row["tool_name"],
+                "arguments": json.loads(row["arguments_json"]),
+                "description": row["description"],
+                "created_at": row["created_at"],
                 "expires_at": row["expires_at"],
+                "digest": row["digest"],
             }
             for row in rows
         ]
+
+    def pending_tool_calls(self, owner_id: str = "local") -> list[dict[str, str]]:
+        return [
+            {
+                "name": str(row["description"]),
+                "tool": str(row["tool_name"]),
+                "status": "awaiting approval",
+                "expires_at": str(row["expires_at"]),
+            }
+            for row in self.pending_tool_records(owner_id)
+        ]
+
+    def proposal_decisions(self, owner_id: str = "local", *, limit: int = 100) -> list[dict[str, str | None]]:
+        if not 1 <= limit <= 1000:
+            raise ValueError("decision limit must be between 1 and 1000")
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT proposal_id, session_id, decision, decided_at, replacement_proposal_id
+                FROM tool_proposal_decisions
+                WHERE owner_id = ? ORDER BY decided_at DESC LIMIT ?
+                """,
+                (owner_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def summaries(self, owner_id: str = "local") -> list[dict[str, str | int]]:
         with self._connect() as connection:
