@@ -12,6 +12,7 @@ from chief.api.integrations import create_integrations_router
 from chief.api.models import create_models_router
 from chief.api.operating import create_operating_router as _create_operating_router
 from chief.api.portfolio import create_portfolio_router
+from chief.api.secrets import create_secrets_router
 from chief.audit.sqlite import SQLiteAuditLog
 from chief.core.config import Settings
 from chief.core.execution_control import ExecutionControlStore
@@ -23,11 +24,8 @@ from chief.integrations.google_calendar import GoogleCalendarReadOnlyConnector
 from chief.integrations.parcelsignals import ParcelSignalsReadOnlyConnector
 from chief.integrations.registry import ConnectorRegistry
 from chief.integrations.stripe import StripeReadOnlyConnector
+from chief.security.secrets import EncryptedSecretStore, SecretResolver
 from chief.tools.registry import create_standard_registry
-
-
-def _secret(name: str) -> str | None:
-    return os.getenv(name, "").strip() or None
 
 
 def _sync_core_execution_setting(enabled: bool) -> None:
@@ -39,12 +37,24 @@ def _sync_core_execution_setting(enabled: bool) -> None:
         object.__setattr__(settings, "execution_enabled", bool(enabled))
 
 
+def _secret_components(database_path):
+    """Use DPAPI vault when supported; keep env only as a temporary migration fallback."""
+
+    try:
+        store = EncryptedSecretStore(database_path)
+    except RuntimeError:
+        store = None
+    resolver = SecretResolver(store, allow_environment_fallback=True)
+    return store, resolver
+
+
 def create_operating_router(*args: Any, **kwargs: Any):
     """Compose operating domains, consented integrations, and owner approval controls."""
 
     session_store = kwargs.pop("session_store", None)
     tool_registry = kwargs.pop("tool_registry", None)
     execution_control = kwargs.pop("execution_control", None)
+    secret_store = kwargs.pop("secret_store", None)
     configured_execution_enabled = bool(kwargs.pop("configured_execution_enabled", True))
 
     router = _create_operating_router(*args, **kwargs)
@@ -55,11 +65,12 @@ def create_operating_router(*args: Any, **kwargs: Any):
     database_path = business_store.database_path
     if session_store is None:
         session_store = SQLiteSessionStore(database_path)
+    audit_log = SQLiteAuditLog(database_path)
     if tool_registry is None:
         project_root = Path(__file__).resolve().parents[3]
         tool_registry = create_standard_registry(
             [str(project_root)],
-            audit_log=SQLiteAuditLog(database_path),
+            audit_log=audit_log,
         )
     if execution_control is None:
         execution_control = ExecutionControlStore(
@@ -69,40 +80,50 @@ def create_operating_router(*args: Any, **kwargs: Any):
     persisted_execution = execution_control.get().enabled
     _sync_core_execution_setting(configured_execution_enabled and persisted_execution)
 
+    if secret_store is None:
+        secret_store, secret_resolver = _secret_components(database_path)
+    else:
+        secret_resolver = SecretResolver(secret_store, allow_environment_fallback=True)
+
     settings = Settings.from_env()
     registry = ConnectorRegistry()
     if settings.github_repositories:
         registry.register(
             GitHubReadOnlyConnector(
                 repositories=settings.github_repositories,
-                token_provider=lambda: _secret("CHIEF_GITHUB_TOKEN"),
+                token_provider=lambda: secret_resolver.get("CHIEF_GITHUB_TOKEN"),
             )
         )
-    if _secret("CHIEF_GMAIL_ACCESS_TOKEN") is not None:
+    if secret_resolver.get("CHIEF_GMAIL_ACCESS_TOKEN") is not None:
         registry.register(
             GmailReadOnlyConnector(
-                token_provider=lambda: _secret("CHIEF_GMAIL_ACCESS_TOKEN"),
+                token_provider=lambda: secret_resolver.get("CHIEF_GMAIL_ACCESS_TOKEN"),
             )
         )
-    if _secret("CHIEF_GOOGLE_CALENDAR_ACCESS_TOKEN") is not None:
+    if secret_resolver.get("CHIEF_GOOGLE_CALENDAR_ACCESS_TOKEN") is not None:
         registry.register(
             GoogleCalendarReadOnlyConnector(
-                token_provider=lambda: _secret("CHIEF_GOOGLE_CALENDAR_ACCESS_TOKEN"),
+                token_provider=lambda: secret_resolver.get("CHIEF_GOOGLE_CALENDAR_ACCESS_TOKEN"),
                 calendar_id=os.getenv("CHIEF_GOOGLE_CALENDAR_ID", "primary").strip() or "primary",
             )
         )
-    if _secret("CHIEF_STRIPE_RESTRICTED_KEY") is not None:
+    if secret_resolver.get("CHIEF_STRIPE_RESTRICTED_KEY") is not None:
         registry.register(
             StripeReadOnlyConnector(
-                api_key_provider=lambda: _secret("CHIEF_STRIPE_RESTRICTED_KEY"),
+                api_key_provider=lambda: secret_resolver.get("CHIEF_STRIPE_RESTRICTED_KEY"),
             )
         )
     parcelsignals_url = os.getenv("CHIEF_PARCELSIGNALS_SUPABASE_URL", "").strip()
-    if parcelsignals_url and _secret("CHIEF_PARCELSIGNALS_SUPABASE_SECRET") is not None:
+    if (
+        parcelsignals_url
+        and secret_resolver.get("CHIEF_PARCELSIGNALS_SUPABASE_SECRET") is not None
+    ):
         registry.register(
             ParcelSignalsReadOnlyConnector(
                 supabase_url=parcelsignals_url,
-                secret_provider=lambda: _secret("CHIEF_PARCELSIGNALS_SUPABASE_SECRET"),
+                secret_provider=lambda: secret_resolver.get(
+                    "CHIEF_PARCELSIGNALS_SUPABASE_SECRET"
+                ),
             )
         )
 
@@ -127,7 +148,16 @@ def create_operating_router(*args: Any, **kwargs: Any):
             ),
         )
     )
-    router.include_router(create_models_router(settings=settings))
+    router.include_router(
+        create_models_router(settings=settings, secret_getter=secret_resolver.get)
+    )
+    if secret_store is not None:
+        router.include_router(
+            create_secrets_router(
+                secret_store=secret_store,
+                audit_log=audit_log,
+            )
+        )
     return router
 
 
@@ -137,4 +167,5 @@ __all__ = [
     "create_models_router",
     "create_operating_router",
     "create_portfolio_router",
+    "create_secrets_router",
 ]
