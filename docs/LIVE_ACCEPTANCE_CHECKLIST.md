@@ -127,7 +127,7 @@ RamJet observations from 2026-09-02 are recorded in
 ## 13. Protected LAN/mobile access
 
 - [x] Keep loopback-only access as the baseline until device identity/revocation is qualified.
-- [ ] If protected LAN access is enabled, verify bearer authentication, trusted host/origin restrictions, and request limits from an enrolled test device.
+- [x] If protected LAN access is enabled, verify bearer authentication, trusted host/origin restrictions, and request limits from an enrolled test device.
 - [ ] Verify an untrusted/unconfigured device cannot access protected routes.
 - [x] Do not treat LAN bearer authentication as final secure mobile enrollment; per-device identity and remote revoke remain a separate product requirement.
 
