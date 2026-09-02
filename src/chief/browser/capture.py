@@ -8,7 +8,7 @@ from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from chief.browser.research import BrowserUrlPolicy
+from chief.browser.research import BrowserDocumentFetcher, BrowserUrlPolicy, PolicyHttpFetcher
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,9 +50,16 @@ class ScreenshotEvidence(BaseModel):
 class PlaywrightScreenshotDriver:
     """Capture one viewport in an ephemeral browser without writing it to disk."""
 
-    def __init__(self, *, policy: BrowserUrlPolicy | None = None, headless: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        policy: BrowserUrlPolicy | None = None,
+        headless: bool = True,
+        fetcher: BrowserDocumentFetcher | None = None,
+    ) -> None:
         self.policy = policy or BrowserUrlPolicy()
         self.headless = headless
+        self.fetcher = fetcher or PolicyHttpFetcher(self.policy)
 
     def capture(self, url: str, *, timeout_ms: int, width: int, height: int) -> RawScreenshot:
         try:
@@ -62,34 +69,24 @@ class PlaywrightScreenshotDriver:
                 "Screenshot capture requires the optional 'browser' dependency and Chromium install."
             ) from exc
 
-        self.policy.validate(url)
+        document = self.fetcher.fetch(url, timeout_ms=timeout_ms, max_bytes=8_000_000)
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=self.headless)
             context = browser.new_context(
                 accept_downloads=False,
                 service_workers="block",
+                java_script_enabled=False,
                 viewport={"width": width, "height": height},
             )
-
-            def guard(route) -> None:
-                try:
-                    self.policy.validate(route.request.url)
-                except (PermissionError, RuntimeError, ValueError):
-                    route.abort("blockedbyclient")
-                    return
-                route.continue_()
-
-            context.route("**/*", guard)
+            context.route("**/*", lambda route: route.abort("blockedbyclient"))
             page = context.new_page()
-            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-            self.policy.validate(page.url)
+            page.set_content(document.html, wait_until="domcontentloaded", timeout=timeout_ms)
             title = page.title()[:1_000]
             png_bytes = page.screenshot(type="png", full_page=False, animations="disabled")
-            final_url = page.url
             context.close()
             browser.close()
         return RawScreenshot(
-            final_url=final_url,
+            final_url=document.final_url,
             title=title,
             png_bytes=png_bytes,
             width=width,

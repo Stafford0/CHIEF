@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import urljoin, urlparse
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +28,16 @@ class BrowserPageEvidence:
 
 class BrowserDriver(Protocol):
     def read(self, url: str, *, timeout_ms: int, max_chars: int, max_links: int) -> BrowserPageEvidence: ...
+
+
+@dataclass(frozen=True, slots=True)
+class FetchedBrowserDocument:
+    final_url: str
+    html: str
+
+
+class BrowserDocumentFetcher(Protocol):
+    def fetch(self, url: str, *, timeout_ms: int, max_bytes: int) -> FetchedBrowserDocument: ...
 
 
 Resolver = Callable[[str], Iterable[str]]
@@ -90,6 +101,57 @@ class BrowserUrlPolicy:
         return url
 
 
+class _PolicyRedirectHandler(HTTPRedirectHandler):
+    def __init__(self, policy: BrowserUrlPolicy) -> None:
+        super().__init__()
+        self.policy = policy
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        self.policy.validate(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+class PolicyHttpFetcher:
+    """Fetch bounded HTML while validating every redirect before following it."""
+
+    def __init__(self, policy: BrowserUrlPolicy | None = None) -> None:
+        self.policy = policy or BrowserUrlPolicy()
+
+    def fetch(self, url: str, *, timeout_ms: int, max_bytes: int) -> FetchedBrowserDocument:
+        safe_url = self.policy.validate(url)
+        opener = build_opener(_PolicyRedirectHandler(self.policy))
+        request = Request(
+            safe_url,
+            headers={
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Encoding": "identity",
+                "User-Agent": "CHIEF-ReadOnly-Evidence/1.0",
+            },
+            method="GET",
+        )
+        try:
+            with opener.open(request, timeout=timeout_ms / 1000) as response:
+                final_url = self.policy.validate(response.geturl())
+                content_type = response.headers.get_content_type().casefold()
+                if content_type not in {"text/html", "application/xhtml+xml"}:
+                    raise RuntimeError(
+                        "Browser research accepts HTML only; "
+                        f"received {content_type or 'unknown'}."
+                    )
+                payload = response.read(max_bytes + 1)
+                if len(payload) > max_bytes:
+                    raise RuntimeError(f"Browser page exceeds the {max_bytes}-byte fetch limit.")
+                charset = response.headers.get_content_charset() or "utf-8"
+        except (PermissionError, RuntimeError, ValueError):
+            raise
+        except OSError as exc:
+            raise RuntimeError(f"Browser fetch failed for {safe_url}: {exc}") from exc
+        return FetchedBrowserDocument(
+            final_url=final_url,
+            html=payload.decode(charset, errors="replace"),
+        )
+
+
 class PlaywrightReadOnlyDriver:
     """Ephemeral Chromium reader with policy enforcement on every network request."""
 
@@ -98,9 +160,11 @@ class PlaywrightReadOnlyDriver:
         *,
         headless: bool = True,
         policy: BrowserUrlPolicy | None = None,
+        fetcher: BrowserDocumentFetcher | None = None,
     ) -> None:
         self.headless = headless
         self.policy = policy or BrowserUrlPolicy()
+        self.fetcher = fetcher or PolicyHttpFetcher(self.policy)
 
     def read(
         self,
@@ -117,27 +181,21 @@ class PlaywrightReadOnlyDriver:
                 "Browser research requires the optional 'browser' dependency and Chromium install."
             ) from exc
 
-        self.policy.validate(url)
+        document = self.fetcher.fetch(
+            url,
+            timeout_ms=timeout_ms,
+            max_bytes=max(2_000_000, min(max_chars * 4, 8_000_000)),
+        )
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=self.headless)
             context = browser.new_context(
                 accept_downloads=False,
                 service_workers="block",
-                java_script_enabled=True,
+                java_script_enabled=False,
             )
             page = context.new_page()
-
-            def guard(route) -> None:
-                try:
-                    self.policy.validate(route.request.url)
-                except (PermissionError, RuntimeError, ValueError):
-                    route.abort("blockedbyclient")
-                    return
-                route.continue_()
-
-            context.route("**/*", guard)
-            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-            self.policy.validate(page.url)
+            context.route("**/*", lambda route: route.abort("blockedbyclient"))
+            page.set_content(document.html, wait_until="domcontentloaded", timeout=timeout_ms)
             title = page.title()
             body = page.locator("body").inner_text(timeout=timeout_ms)
             truncated = len(body) > max_chars
@@ -147,19 +205,18 @@ class PlaywrightReadOnlyDriver:
                 href = locator.get_attribute("href")
                 if not href:
                     continue
-                resolved = urljoin(page.url, href)
+                resolved = urljoin(document.final_url, href)
                 try:
                     self.policy.validate(resolved)
                 except (PermissionError, RuntimeError, ValueError):
                     continue
                 label = locator.inner_text(timeout=timeout_ms).strip()[:500]
                 links.append(BrowserLink(text=label, url=resolved))
-            final_url = page.url
             context.close()
             browser.close()
         return BrowserPageEvidence(
             url=url,
-            final_url=final_url,
+            final_url=document.final_url,
             title=title[:1000],
             text=text,
             links=tuple(links),
