@@ -13,6 +13,9 @@ from chief.events.scheduler import Scheduler
 from chief.events.store import EventStore
 from chief.foresight.scoring import rank_signals
 from chief.foresight.store import ForesightStore
+from chief.notifications.factory import build_notification_dispatcher
+from chief.notifications.pump import NotificationPump
+from chief.notifications.store import NotificationStore
 from chief.runs import ActionResult, RunEngine, SQLiteRunStore, StepSpec, VerificationStatus
 from chief.work.briefing import build_briefing
 from chief.work.store import WorkStore
@@ -27,6 +30,8 @@ class RuntimeTick:
     dead_letters: int
     free_disk_bytes: int
     reason: str | None = None
+    notification_deliveries: int = 0
+    notification_failures: int = 0
 
 
 class RuntimeStateStore:
@@ -83,7 +88,7 @@ class RuntimeStateStore:
 
 
 class RuntimeSupervisor:
-    """Continuously advance CHIEF's existing durable scheduler, event, and run queues."""
+    """Continuously advance CHIEF's durable queues and approved notifications."""
 
     def __init__(
         self,
@@ -94,6 +99,7 @@ class RuntimeSupervisor:
         run_engine: RunEngine,
         state_store: RuntimeStateStore | None = None,
         execution_control: ExecutionControlStore | None = None,
+        notification_pump: NotificationPump | None = None,
         configured_execution_enabled: bool = True,
         worker_id: str = "chief-runtime",
         min_free_disk_bytes: int = 512 * 1024 * 1024,
@@ -119,6 +125,7 @@ class RuntimeSupervisor:
         self.run_engine = run_engine
         self.state_store = state_store or RuntimeStateStore(event_store.database_path)
         self.execution_control = execution_control or ExecutionControlStore(event_store.database_path)
+        self.notification_pump = notification_pump
         self.configured_execution_enabled = bool(configured_execution_enabled)
         self.worker_id = worker_id
         self.min_free_disk_bytes = min_free_disk_bytes
@@ -214,9 +221,23 @@ class RuntimeSupervisor:
             worker_id=self.worker_id,
             max_steps=self.max_run_steps_per_tick,
         )
+        notification_deliveries = 0
+        notification_failures = 0
+        if self.notification_pump is not None:
+            notification_result = self.notification_pump.pump_once(now=now)
+            notification_deliveries = notification_result.delivered
+            notification_failures = notification_result.failed
+
         dead_letters = self.event_store.counts().get("dead_letter", 0)
-        status = "degraded" if dead_letters else "healthy"
-        reason = f"{dead_letters} event(s) are in dead-letter state" if dead_letters else None
+        degraded_reasons: list[str] = []
+        if dead_letters:
+            degraded_reasons.append(f"{dead_letters} event(s) are in dead-letter state")
+        if notification_failures:
+            degraded_reasons.append(
+                f"{notification_failures} notification delivery attempt(s) failed"
+            )
+        status = "degraded" if degraded_reasons else "healthy"
+        reason = "; ".join(degraded_reasons) or None
         self.state_store.record(now=now, status=status, reason=reason)
         return RuntimeTick(
             status=status,
@@ -226,6 +247,8 @@ class RuntimeSupervisor:
             dead_letters=dead_letters,
             free_disk_bytes=free_disk,
             reason=reason,
+            notification_deliveries=notification_deliveries,
+            notification_failures=notification_failures,
         )
 
     def run_forever(
@@ -254,6 +277,11 @@ def build_runtime_supervisor(
     foresight_store = ForesightStore(database_path)
     event_store = EventStore(database_path)
     run_store = SQLiteRunStore(database_path)
+    notification_store = NotificationStore(database_path)
+    notification_dispatcher = build_notification_dispatcher(
+        database_path,
+        store=notification_store,
+    )
 
     def briefing_handler(_context, _arguments: dict[str, Any]) -> ActionResult:
         briefing = build_briefing(work_store, limit=10)
@@ -291,6 +319,7 @@ def build_runtime_supervisor(
         run_engine=run_engine,
         state_store=RuntimeStateStore(database_path),
         execution_control=ExecutionControlStore(database_path),
+        notification_pump=NotificationPump(notification_store, notification_dispatcher),
         configured_execution_enabled=configured_execution_enabled,
         worker_id=worker_id,
         min_free_disk_bytes=min_free_disk_bytes,
