@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -358,9 +357,13 @@ def build_canonical_briefing(
 
     if not documents:
         unverified.append("No synchronized business evidence is available for this owner.")
-    stale_documents = [item for item in documents if (_age_seconds(item.updated_at, current) or 0) > 604800]
+    stale_documents = [
+        item for item in documents if (_age_seconds(item.updated_at, current) or 0) > 604800
+    ]
     if stale_documents:
-        unverified.append(f"{len(stale_documents)} synchronized evidence record(s) are older than seven days.")
+        unverified.append(
+            f"{len(stale_documents)} synchronized evidence record(s) are older than seven days."
+        )
     if conflicts:
         unverified.append(f"{len(conflicts)} evidence conflict(s) require reconciliation.")
 
