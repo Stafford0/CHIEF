@@ -10,6 +10,7 @@ from typing import Any
 from chief.api.approvals import create_approvals_router
 from chief.api.integrations import create_integrations_router
 from chief.api.models import create_models_router
+from chief.api.notification_delivery import create_notification_delivery_router
 from chief.api.operating import create_operating_router as _create_operating_router
 from chief.api.portfolio import create_portfolio_router
 from chief.api.secrets import create_secrets_router
@@ -24,6 +25,7 @@ from chief.integrations.google_calendar import GoogleCalendarReadOnlyConnector
 from chief.integrations.parcelsignals import ParcelSignalsReadOnlyConnector
 from chief.integrations.registry import ConnectorRegistry
 from chief.integrations.stripe import StripeReadOnlyConnector
+from chief.notifications.delivery import NotificationDispatcher, SMTPEmailProvider
 from chief.security.secrets import EncryptedSecretStore, SecretResolver
 from chief.tools.registry import create_standard_registry
 
@@ -48,6 +50,18 @@ def _secret_components(database_path):
     return store, resolver
 
 
+def _bool_environment(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip().casefold()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be true or false.")
+
+
 def create_operating_router(*args: Any, **kwargs: Any):
     """Compose operating domains, consented integrations, and owner approval controls."""
 
@@ -59,8 +73,11 @@ def create_operating_router(*args: Any, **kwargs: Any):
 
     router = _create_operating_router(*args, **kwargs)
     business_store = kwargs.get("business_store")
+    notification_store = kwargs.get("notification_store")
     if business_store is None:
         raise TypeError("create_operating_router requires business_store")
+    if notification_store is None:
+        raise TypeError("create_operating_router requires notification_store")
 
     database_path = business_store.database_path
     if session_store is None:
@@ -151,6 +168,31 @@ def create_operating_router(*args: Any, **kwargs: Any):
     router.include_router(
         create_models_router(settings=settings, secret_getter=secret_resolver.get)
     )
+
+    smtp_host = os.getenv("CHIEF_SMTP_HOST", "").strip()
+    smtp_sender = os.getenv("CHIEF_SMTP_FROM", "").strip()
+    smtp_recipient = os.getenv("CHIEF_NOTIFICATION_EMAIL_TO", "").strip()
+    providers = []
+    if smtp_host and smtp_sender and smtp_recipient:
+        providers.append(
+            SMTPEmailProvider(
+                host=smtp_host,
+                port=int(os.getenv("CHIEF_SMTP_PORT", "587")),
+                sender=smtp_sender,
+                recipient=smtp_recipient,
+                username=os.getenv("CHIEF_SMTP_USERNAME", "").strip() or None,
+                password_provider=lambda: secret_resolver.get("CHIEF_SMTP_PASSWORD"),
+                use_ssl=_bool_environment("CHIEF_SMTP_USE_SSL", False),
+                starttls=_bool_environment("CHIEF_SMTP_STARTTLS", True),
+            )
+        )
+    router.include_router(
+        create_notification_delivery_router(
+            notification_store=notification_store,
+            dispatcher=NotificationDispatcher(notification_store, providers),
+        )
+    )
+
     if secret_store is not None:
         router.include_router(
             create_secrets_router(
@@ -165,6 +207,7 @@ __all__ = [
     "create_approvals_router",
     "create_integrations_router",
     "create_models_router",
+    "create_notification_delivery_router",
     "create_operating_router",
     "create_portfolio_router",
     "create_secrets_router",
