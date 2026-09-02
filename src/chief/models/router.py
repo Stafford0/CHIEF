@@ -1,7 +1,13 @@
 import time
 from dataclasses import dataclass
 
-from chief.models.base import ModelCapabilities, ModelProvider, ModelResponse, RouteRequirements
+from chief.models.base import (
+    ModelCapabilities,
+    ModelPrivacy,
+    ModelProvider,
+    ModelResponse,
+    RouteRequirements,
+)
 
 
 @dataclass(frozen=True)
@@ -39,7 +45,11 @@ class ModelRouter:
 
     @staticmethod
     def _capabilities(provider: ModelProvider) -> ModelCapabilities:
-        return getattr(provider, "capabilities", ModelCapabilities())
+        if isinstance(provider, ModelProvider):
+            return provider.capabilities
+        # Backward compatibility for code-owned/test-injected legacy providers that predate
+        # ModelProvider. They are treated as local-only shims, never as cloud-capable adapters.
+        return ModelCapabilities(privacy=ModelPrivacy.LOCAL)
 
     def generate(
         self,
