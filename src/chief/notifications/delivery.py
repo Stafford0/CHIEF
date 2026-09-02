@@ -133,7 +133,7 @@ class NotificationDispatcher:
             idempotency_key = f"notify:{notification.id}:{channel.value}:{attempt_number}"
             try:
                 result = provider.send(notification)
-            except Exception as exc:
+            except (OSError, RuntimeError, smtplib.SMTPException) as exc:
                 attempt = self.store.record_delivery_attempt(
                     DeliveryAttempt(
                         notification_id=notification.id,
