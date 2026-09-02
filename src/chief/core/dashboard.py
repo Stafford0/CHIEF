@@ -6,6 +6,7 @@ import platform
 import shutil
 import socket
 import subprocess
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -61,12 +62,14 @@ def _memory() -> dict[str, Any]:
         )
         try:
             data = json.loads(raw)
+            if not isinstance(data, dict):
+                raise TypeError("Windows memory telemetry was not an object")
             total = float(data["total"])
             free = float(data["free"])
             used = max(0.0, total - free)
             pct = round((used / total) * 100.0, 1) if total else 0.0
             return {"total_gb": total, "used_gb": round(used, 2), "percent": pct}
-        except (ValueError, KeyError, json.JSONDecodeError):
+        except (TypeError, ValueError, KeyError, json.JSONDecodeError):
             pass
     return {"total_gb": None, "used_gb": None, "percent": None}
 
@@ -128,6 +131,8 @@ def _network() -> dict[str, Any]:
             parsed = json.loads(raw) if raw else []
             if isinstance(parsed, dict):
                 parsed = [parsed]
+            elif not isinstance(parsed, list):
+                parsed = []
             adapters = [
                 {
                     "name": str(item.get("Name", "Adapter")),
@@ -135,6 +140,7 @@ def _network() -> dict[str, Any]:
                     "link_speed": str(item.get("LinkSpeed", "")),
                 }
                 for item in parsed
+                if isinstance(item, dict)
             ]
         except json.JSONDecodeError:
             pass
@@ -171,7 +177,11 @@ def _projects(project_root: Path) -> list[dict[str, str]]:
         candidates = []
 
     for path in candidates:
-        if not (path / ".git").exists():
+        try:
+            is_repository = (path / ".git").exists()
+        except OSError:
+            is_repository = False
+        if not is_repository:
             continue
         branch = _run(["git", "-C", str(path), "branch", "--show-current"], timeout=1.5)
         status = "active" if branch else "repository"
@@ -200,12 +210,48 @@ def _projects(project_root: Path) -> list[dict[str, str]]:
     return projects
 
 
+def _capture_metric[T](
+    name: str,
+    collector: Callable[[], T],
+    fallback: T,
+    degraded: list[str],
+) -> T:
+    try:
+        return collector()
+    except Exception:  # noqa: BLE001 - optional telemetry must degrade independently
+        degraded.append(name)
+        return fallback
+
+
 def collect_dashboard_snapshot(project_root: Path) -> dict[str, Any]:
-    memory = _memory()
-    disk = _disk(project_root)
-    gpu = _gpu()
-    network = _network()
-    ollama = _ollama_models()
+    degraded: list[str] = []
+    memory = _capture_metric(
+        "memory",
+        _memory,
+        {"total_gb": None, "used_gb": None, "percent": None},
+        degraded,
+    )
+    disk = _capture_metric(
+        "disk",
+        lambda: _disk(project_root),
+        {"total_gb": 0.0, "used_gb": 0.0, "free_gb": 0.0, "percent": 0.0},
+        degraded,
+    )
+    gpu = _capture_metric("gpu", _gpu, {"available": False}, degraded)
+    network = _capture_metric(
+        "network",
+        _network,
+        {"hostname": socket.gethostname(), "addresses": [], "adapters": []},
+        degraded,
+    )
+    ollama = _capture_metric(
+        "ollama",
+        _ollama_models,
+        {"online": False, "models": []},
+        degraded,
+    )
+    cpu_percent = _capture_metric("cpu", _cpu_percent, None, degraded)
+    projects = _capture_metric("projects", lambda: _projects(project_root), [], degraded)
 
     return {
         "captured_at": datetime.now(UTC).isoformat(),
@@ -217,11 +263,12 @@ def collect_dashboard_snapshot(project_root: Path) -> dict[str, Any]:
             "python": platform.python_version(),
             "cpu_count": os.cpu_count(),
         },
-        "cpu": {"percent": _cpu_percent()},
+        "cpu": {"percent": cpu_percent},
         "memory": memory,
         "disk": disk,
         "gpu": gpu,
         "network": network,
         "ollama": ollama,
-        "projects": _projects(project_root),
+        "projects": projects,
+        "degraded_components": degraded,
     }

@@ -973,7 +973,31 @@ def dashboard_info(request: Request) -> dict[str, Any]:
     """Return live host/runtime telemetry used by the CHIEF command center UI."""
     from chief.core.dashboard import collect_dashboard_snapshot
 
-    snapshot = collect_dashboard_snapshot(PROJECT_ROOT)
+    degraded_components: list[str] = []
+    try:
+        snapshot = collect_dashboard_snapshot(PROJECT_ROOT)
+        degraded_components.extend(snapshot.pop("degraded_components", []))
+    except Exception:
+        logger.exception("dashboard_host_telemetry_failed")
+        degraded_components.append("host_telemetry")
+        snapshot = {
+            "captured_at": datetime.now(UTC).isoformat(),
+            "host": {
+                "hostname": "unavailable",
+                "os": "unavailable",
+                "os_release": "unavailable",
+                "architecture": "unavailable",
+                "python": "unavailable",
+                "cpu_count": None,
+            },
+            "cpu": {"percent": None},
+            "memory": {"total_gb": None, "used_gb": None, "percent": None},
+            "disk": {"total_gb": 0.0, "used_gb": 0.0, "free_gb": 0.0, "percent": 0.0},
+            "gpu": {"available": False},
+            "network": {"hostname": "unavailable", "addresses": [], "adapters": []},
+            "ollama": {"online": False, "models": []},
+            "projects": [],
+        }
     definitions = list(tool_registry.definitions())
     audit_events = tool_registry.audit_log.events()[-8:]
     goals = work_store.list_goals()
@@ -994,6 +1018,7 @@ def dashboard_info(request: Request) -> dict[str, Any]:
     )
     snapshot["runtime"] = {
         "api_status": "online",
+        "degraded_components": degraded_components,
         "execution_enabled": settings.execution_enabled,
         "active_model": model_provider.model,
         "model_provider": model_provider.name,
