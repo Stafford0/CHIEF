@@ -28,6 +28,7 @@ Thumbs.db
 node_modules/
 dist/
 build/
+/work/ms-playwright/
 
 # Logs / runtime
 *.log

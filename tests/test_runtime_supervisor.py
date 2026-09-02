@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -121,3 +123,22 @@ def test_backward_clock_is_detected_across_worker_restart(tmp_path: Path) -> Non
 
     assert tick.status == "degraded"
     assert "clock moved backwards" in (tick.reason or "")
+
+
+def test_run_forever_retries_transient_database_lock(tmp_path: Path) -> None:
+    supervisor, _, _ = _supervisor(tmp_path)
+    stop = threading.Event()
+    attempts = 0
+
+    def tick_once():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise sqlite3.OperationalError("database is locked")
+        stop.set()
+
+    supervisor.tick_once = tick_once  # type: ignore[method-assign]
+
+    supervisor.run_forever(stop_event=stop, interval_seconds=0.1)
+
+    assert attempts == 2

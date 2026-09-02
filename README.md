@@ -156,9 +156,29 @@ cd apps\chief-ui
 npm run build
 ```
 
+### Windows Service
+
+Install the Windows and browser extras into the CHIEF virtual environment, install the pinned
+Chromium runtime into the service-visible browser directory, and then install the service from
+an elevated PowerShell session:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[windows,browser]"
+$env:PLAYWRIGHT_BROWSERS_PATH = "$PWD\work\ms-playwright"
+.\.venv\Scripts\python.exe -m playwright install chromium
+.\.venv\Scripts\python.exe -m chief.runtime.windows_service --startup auto install
+.\.venv\Scripts\python.exe -m chief.runtime.windows_service start
+```
+
+The service runs the durable worker and the API together, fixes its working directory to
+`CHIEF_HOME` (the checkout by default), resolves the SQLite path to an absolute path, and refuses
+to bind the API outside loopback. The default service account is LocalSystem; use a dedicated
+service identity only when its logon credentials and filesystem permissions have been prepared.
+The DPAPI vault is bound to whichever identity actually runs the service.
+
 Runtime settings are environment variables documented in `.env.example`. CHIEF creates its
-local tables in `data/chief.db` by default. Do not store credentials in that database or in
-source control; a production secrets vault and encrypted backup policy are not implemented.
+local tables in `data/chief.db` by default. Store credentials through the Windows DPAPI vault,
+never in source control, and use the verified recovery tooling for database backups.
 
 ## Network and authority defaults
 
@@ -182,8 +202,8 @@ CHIEF has a strong local control plane, but it is not yet a finished autonomous 
   exists as a framework, not an operational provider portfolio.
 - Integration contracts are implemented, but live GitHub, Stripe, email, calendar, CRM,
   support, analytics, and market-data connectors still require credentials and adapters.
-- Schedules and runs advance through bounded tick calls; no supervised always-on worker or
-  Windows service is shipped.
+- Schedules and runs advance through a bounded always-on worker. The Windows service still
+  requires qualification under the intended host identity before production use.
 - The durable run engine has only a small safe handler set. It is not a general unattended
   automation fabric.
 - Sensitive chat approvals are persistent and single-use. The separate plan approval ledger
@@ -201,11 +221,12 @@ CHIEF has a strong local control plane, but it is not yet a finished autonomous 
   zero spend and no external-write authority until a future explicit governance workflow grants
   narrower permission; registration alone cannot activate them.
 - SQLite is appropriate for the current single-owner/single-host milestone, not a distributed
-  multi-worker or multi-tenant deployment.
-- State is not encrypted at rest, the audit chain is not externally anchored, schema migration
-  and backup/restore tooling are incomplete, and no external security assessment has occurred.
-- Browser/computer use, vision, encrypted secret storage, multi-user RBAC, secure internet
-  relay, and production mobile qualification remain future work.
+  multi-worker or multi-tenant deployment. General state is not encrypted at rest; credentials
+  use the separate DPAPI vault.
+- The audit chain is not externally anchored and no external security assessment has occurred.
+- Browser research and screenshot evidence are read-only and policy-bounded. General computer
+  use, multi-user RBAC, secure internet relay, and production mobile qualification remain future
+  work.
 
 For the evidence-based competitive assessment and prioritized remaining work, see
 [docs/BEST_IN_CLASS_CHECKLIST.md](docs/BEST_IN_CLASS_CHECKLIST.md). The blank portfolio hierarchy,

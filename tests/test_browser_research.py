@@ -10,6 +10,7 @@ from chief.browser.research import (
     BrowserPageEvidence,
     BrowserResearchService,
     BrowserUrlPolicy,
+    _PolicyRedirectHandler,
 )
 
 
@@ -50,6 +51,20 @@ def test_url_policy_blocks_public_hostname_that_resolves_private() -> None:
     policy = BrowserUrlPolicy(resolver=lambda _host: ["10.0.0.5"])
     with pytest.raises(PermissionError, match="resolves"):
         policy.validate("https://example.com")
+
+
+def test_redirect_handler_rejects_private_target_before_following() -> None:
+    handler = _PolicyRedirectHandler(public_policy())
+
+    with pytest.raises(PermissionError):
+        handler.redirect_request(
+            None,
+            None,
+            302,
+            "Found",
+            {},
+            "http://127.0.0.1/private",
+        )
 
 
 def test_service_marks_page_content_untrusted_and_rechecks_redirect() -> None:

@@ -4,46 +4,49 @@ This checklist covers the remaining v1 acceptance work that repository CI cannot
 
 A checkbox is complete only when the named observation is recorded. Do not substitute “configured” for “verified.”
 
+RamJet observations from 2026-09-02 are recorded in
+[`acceptance/RAMJET_2026-09-02.md`](acceptance/RAMJET_2026-09-02.md).
+
 ## 1. Windows runtime service
 
-- [ ] Install the CHIEF Windows Service under the intended Windows identity.
-- [ ] Start the service and verify `/health` and `/ready` are healthy.
-- [ ] Reboot Windows and verify CHIEF starts without an interactive shell.
-- [ ] Create a durable scheduled event before reboot and verify it survives restart.
-- [ ] Pause execution through the durable emergency stop, reboot, and verify execution remains paused.
-- [ ] Resume execution and verify one bounded scheduled event advances through event → run → verification.
-- [ ] Force one unknown event handler and verify it retries, reaches dead letter, appears in operator status, and can be explicitly retried/dismissed.
-- [ ] Record service user, executable path, database path, startup mode, and observed boot-recovery result.
+- [x] Install the CHIEF Windows Service under the intended Windows identity.
+- [x] Start the service and verify `/health` and `/ready` are healthy.
+- [x] Reboot Windows and verify CHIEF starts without an interactive shell.
+- [x] Create a durable scheduled event before reboot and verify it survives restart.
+- [x] Pause execution through the durable emergency stop, reboot, and verify execution remains paused.
+- [x] Resume execution and verify one bounded scheduled event advances through event → run → verification.
+- [x] Force one unknown event handler and verify it retries, reaches dead letter, appears in operator status, and can be explicitly retried/dismissed.
+- [x] Record service user, executable path, database path, startup mode, and observed boot-recovery result.
 
 ## 2. Windows DPAPI secret vault
 
-- [ ] Store a disposable test credential through the secret API.
-- [ ] Confirm the plaintext value does not appear in SQLite, source files, logs, or audit metadata.
-- [ ] Restart CHIEF under the same intended Windows identity and verify decryption succeeds.
-- [ ] Attempt to read the same vault under a different Windows identity and verify it cannot decrypt the secret.
-- [ ] Rotate the test credential and verify only the new value resolves.
-- [ ] Revoke the test credential and verify resolution fails afterward.
-- [ ] Confirm the service identity used for DPAPI is the same identity intended for production operation.
+- [x] Store a disposable test credential through the secret API.
+- [x] Confirm the plaintext value does not appear in SQLite, source files, logs, or audit metadata.
+- [x] Restart CHIEF under the same intended Windows identity and verify decryption succeeds.
+- [x] Attempt to read the same vault under a different Windows identity and verify it cannot decrypt the secret.
+- [x] Rotate the test credential and verify only the new value resolves.
+- [x] Revoke the test credential and verify resolution fails afterward.
+- [x] Confirm the service identity used for DPAPI is the same identity intended for production operation.
 
 ## 3. Backup, restore, and rollback
 
-- [ ] Create a verified online backup while CHIEF is running.
+- [x] Create a verified online backup while CHIEF is running.
 - [ ] Copy the backup and manifest to storage outside the CHIEF host.
 - [ ] Verify the off-device copy digest.
 - [ ] On a clean/test machine, stage the backup and run the integrity check.
-- [ ] Verify restore activation refuses while the target database is busy.
-- [ ] Stop CHIEF, activate the staged restore, restart CHIEF, and verify durable conversations, work state, approvals, evidence, and runs are readable.
-- [ ] Run `/operator/schema-compatibility` and verify `compatible=true` with no newer or malformed components.
-- [ ] Exercise the rollback compatibility gate against the intended previous release version before any real downgrade.
+- [x] Verify restore activation refuses while the target database is busy.
+- [x] Stop CHIEF, activate the staged restore, restart CHIEF, and verify durable conversations, work state, approvals, evidence, and runs are readable.
+- [x] Run `/operator/schema-compatibility` and verify `compatible=true` with no newer or malformed components.
+- [x] Exercise the rollback compatibility gate against the intended previous release version before any real downgrade.
 
 ## 4. Browser and screenshot evidence
 
-- [ ] Install the pinned Playwright/Chromium runtime on Windows.
-- [ ] Read a public HTTPS page and verify extracted text/links are labeled `untrusted_external`.
-- [ ] Attempt localhost, RFC1918/private, link-local, and public-to-private redirect targets and verify they are blocked.
-- [ ] Capture one screenshot with the bounded capture API and verify digest, byte count, expiry, and `persisted=false` receipt fields.
-- [ ] Verify screenshot bytes are not written to CHIEF storage by the capture service.
-- [ ] Verify clicking, form fill, credential entry, downloads, and arbitrary JavaScript remain unavailable.
+- [x] Install the pinned Playwright/Chromium runtime on Windows.
+- [x] Read a public HTTPS page and verify extracted text/links are labeled `untrusted_external`.
+- [x] Attempt localhost, RFC1918/private, link-local, and public-to-private redirect targets and verify they are blocked.
+- [x] Capture one screenshot with the bounded capture API and verify digest, byte count, expiry, and `persisted=false` receipt fields.
+- [x] Verify screenshot bytes are not written to CHIEF storage by the capture service.
+- [x] Verify clicking, form fill, credential entry, downloads, and arbitrary JavaScript remain unavailable.
 
 ## 5. GitHub evidence
 
@@ -117,13 +120,13 @@ A checkbox is complete only when the named observation is recorded. Do not subst
 - [ ] Verify VAD never authorizes an action and all audio still reaches the configured STT path.
 - [ ] Measure operator cancellation latency during listening, thinking, and speaking.
 - [ ] Verify raw audio is not retained by the CHIEF voice session layer.
-- [ ] Verify text fallback remains usable when speech providers are unavailable.
-- [ ] Do not enable sensitive-action voice approval until a separate challenge-bound confirmation flow is implemented and evaluated.
-- [ ] Do not enable wake word or full-duplex barge-in until device/privacy testing justifies them.
+- [x] Verify text fallback remains usable when speech providers are unavailable.
+- [x] Do not enable sensitive-action voice approval until a separate challenge-bound confirmation flow is implemented and evaluated.
+- [x] Do not enable wake word or full-duplex barge-in until device/privacy testing justifies them.
 
 ## 13. Protected LAN/mobile access
 
-- [ ] Keep loopback-only access as the baseline until device identity/revocation is qualified.
+- [x] Keep loopback-only access as the baseline until device identity/revocation is qualified.
 - [ ] If protected LAN access is enabled, verify bearer authentication, trusted host/origin restrictions, and request limits from an enrolled test device.
 - [ ] Verify an untrusted/unconfigured device cannot access protected routes.
 - [ ] Do not treat LAN bearer authentication as final secure mobile enrollment; per-device identity and remote revoke remain a separate product requirement.

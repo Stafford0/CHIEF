@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import shutil
 import sqlite3
 import threading
@@ -19,6 +20,8 @@ from chief.notifications.store import NotificationStore
 from chief.runs import ActionResult, RunEngine, SQLiteRunStore, StepSpec, VerificationStatus
 from chief.work.briefing import build_briefing
 from chief.work.store import WorkStore
+
+logger = logging.getLogger("chief.runtime.supervisor")
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,7 +264,10 @@ class RuntimeSupervisor:
             raise ValueError("interval_seconds must be between 0.1 and 3600")
         stop_event = stop_event or threading.Event()
         while not stop_event.is_set():
-            self.tick_once()
+            try:
+                self.tick_once()
+            except sqlite3.OperationalError:
+                logger.exception("runtime_tick_database_temporarily_unavailable")
             stop_event.wait(interval_seconds)
 
 

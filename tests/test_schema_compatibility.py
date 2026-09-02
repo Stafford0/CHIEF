@@ -54,4 +54,7 @@ def test_schema_service_blocks_unsafe_rollback(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="Rollback is unsafe"):
         service.assert_rollback_safe({"work": 0})
 
+    with pytest.raises(RuntimeError, match="unknown to rollback target"):
+        service.assert_rollback_safe({})
+
     service.assert_rollback_safe({"work": 1})
