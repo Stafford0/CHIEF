@@ -1,6 +1,7 @@
 """Consent-gated, provider-independent connector contracts."""
 
 from .base import Connector
+from .github import GitHubReadOnlyConnector
 from .registry import (
     ConnectorAlreadyRegistered,
     ConnectorNotRegistered,
@@ -49,6 +50,7 @@ __all__ = [
     "EvidenceRecord",
     "EvidenceSensitivity",
     "EvidenceSource",
+    "GitHubReadOnlyConnector",
     "IdempotencyMetadata",
     "RateLimitMetadata",
     "ScopeAccess",
