@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from chief.cofounder import CanonicalBriefing, build_canonical_briefing
 from chief.operator import EventRecoveryAction, OperatorRecoveryService, OperatorStatus
+from chief.release import SchemaCompatibilityReport, SchemaCompatibilityService
 
 
 class RecoveryRequest(BaseModel):
@@ -26,6 +27,7 @@ def _actor(request: Request) -> str:
 def create_cofounder_router(*, database_path: str | Path) -> APIRouter:
     router = APIRouter(tags=["cofounder"])
     recovery = OperatorRecoveryService(database_path)
+    schema = SchemaCompatibilityService(database_path)
 
     @router.get("/cofounder/briefing", response_model=CanonicalBriefing)
     def canonical_briefing(request: Request, limit: int = 7) -> CanonicalBriefing:
@@ -42,6 +44,11 @@ def create_cofounder_router(*, database_path: str | Path) -> APIRouter:
     def operator_status(request: Request) -> OperatorStatus:
         _actor(request)
         return recovery.status()
+
+    @router.get("/operator/schema-compatibility", response_model=SchemaCompatibilityReport)
+    def schema_compatibility(request: Request) -> SchemaCompatibilityReport:
+        _actor(request)
+        return schema.inspect()
 
     @router.get("/operator/dead-letters")
     def dead_letters(request: Request, limit: int = 100):
