@@ -42,8 +42,11 @@ https://<CHIEF-PRIVATE-HOST>
 ```
 
 The development frontend automatically targets port `8000` on the same hostname for the
-CHIEF API. Plain remote HTTP is intentionally not allowed to transmit the pairing token; use
-localhost for development or configure an HTTPS/private-tunnel endpoint for another device.
+CHIEF API. Production builds default to the same-origin `/api` proxy path so mobile browsers
+only need the standard private HTTPS endpoint. A Tailscale Serve deployment can serve the built
+PWA at `/` and proxy `/api` to the loopback API on port `8000`. Plain remote HTTP is intentionally
+not allowed to transmit the pairing token; use localhost for development or configure an
+HTTPS/private-tunnel endpoint for another device.
 Protected LAN mode displays a pairing field for the 32+ character `CHIEF_API_TOKEN`. The
 token is held in memory and browser `sessionStorage` for the current tab session only. It is
 never embedded in the frontend build, placed in a URL, written to local storage, or cached by

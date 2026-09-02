@@ -78,7 +78,10 @@ type Dashboard = {
 
 type View = "overview" | "portfolio" | "chat";
 const DEFAULT_API_PROTOCOL = window.location.protocol === "https:" ? "https:" : "http:";
-const API_BASE = import.meta.env.VITE_CHIEF_API_URL || `${DEFAULT_API_PROTOCOL}//${window.location.hostname}:8000`;
+const DEFAULT_API_BASE = import.meta.env.PROD
+  ? `${window.location.origin}/api`
+  : `${DEFAULT_API_PROTOCOL}//${window.location.hostname}:8000`;
+const API_BASE = import.meta.env.VITE_CHIEF_API_URL || DEFAULT_API_BASE;
 const API_URL = new URL(API_BASE, window.location.href);
 const API_IS_LOOPBACK = ["localhost", "127.0.0.1", "::1"].includes(API_URL.hostname);
 const API_IS_PROTECTED = API_URL.protocol === "https:";
