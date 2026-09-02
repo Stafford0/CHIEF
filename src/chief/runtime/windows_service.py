@@ -47,12 +47,12 @@ if win32serviceutil is not None:
             self._stop = threading.Event()
             self._stop_handle = win32event.CreateEvent(None, 0, 0, None)
 
-        def SvcStop(self) -> None:  # noqa: N802 - PyWin32 service API contract
+        def SvcStop(self) -> None:
             self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
             self._stop.set()
             win32event.SetEvent(self._stop_handle)
 
-        def SvcDoRun(self) -> None:  # noqa: N802 - PyWin32 service API contract
+        def SvcDoRun(self) -> None:
             servicemanager.LogInfoMsg("CHIEF Runtime service starting")
             try:
                 interval_ms = int(os.getenv("CHIEF_RUNTIME_INTERVAL_MS", "2000"))
@@ -60,7 +60,7 @@ if win32serviceutil is not None:
                     stop_event=self._stop,
                     interval_seconds=max(0.1, interval_ms / 1000),
                 )
-            except Exception as exc:  # noqa: BLE001 - service boundary must log fatal failures
+            except Exception as exc:
                 servicemanager.LogErrorMsg(f"CHIEF Runtime failed: {exc}")
                 raise
             finally:
