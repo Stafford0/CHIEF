@@ -40,7 +40,7 @@ Transport = Callable[[str, Mapping[str, str]], tuple[int, Any, Mapping[str, str]
 def _parse_time(value: object, fallback: datetime) -> datetime:
     if not isinstance(value, str) or not value:
         return fallback
-    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+    return datetime.fromisoformat(value).astimezone(UTC)
 
 
 def _rate_limit(headers: Mapping[str, str]) -> RateLimitMetadata | None:
@@ -68,7 +68,7 @@ def _default_transport(url: str, headers: Mapping[str, str]) -> tuple[int, Any, 
     request = Request(url, headers=dict(headers), method="GET")
     started = time.perf_counter()
     try:
-        with urlopen(request, timeout=15) as response:  # noqa: S310 - fixed HTTPS API base
+        with urlopen(request, timeout=15) as response:
             raw = response.read().decode("utf-8")
             latency_ms = (time.perf_counter() - started) * 1000
             payload = json.loads(raw) if raw else None
@@ -269,8 +269,10 @@ class GitHubReadOnlyConnector:
             observed_at = _parse_time(item.get("updated_at") or item.get("created_at"), retrieved_at)
 
         content = json.dumps(item, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        private = bool(item.get("private")) if record_type == "repository" else False
-        sensitivity = EvidenceSensitivity.INTERNAL if private else EvidenceSensitivity.PUBLIC
+        if record_type == "repository" and item.get("private") is False:
+            sensitivity = EvidenceSensitivity.PUBLIC
+        else:
+            sensitivity = EvidenceSensitivity.INTERNAL
         deep_link = item.get("html_url") if isinstance(item.get("html_url"), str) else None
         return EvidenceRecord.capture(
             connector_id="github",
