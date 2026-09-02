@@ -12,6 +12,7 @@ CURRENT_SCHEMA_VERSIONS: dict[str, int] = {
     "events": 1,
     "evidence_plane": 1,
     "foresight": 1,
+    "model_routes": 1,
     "notifications": 1,
     "operator_recovery": 1,
     "portfolio_registry": 1,
@@ -33,6 +34,10 @@ _COMPONENT_TABLES: dict[str, tuple[str, frozenset[str]]] = {
     "foresight": (
         "foresight_signals",
         frozenset({"id", "payload_json", "status", "observed_at"}),
+    ),
+    "model_routes": (
+        "model_route_receipts",
+        frozenset({"id", "actor_id", "request_id", "selected_provider", "attempts_json"}),
     ),
     "notifications": (
         "notifications",
@@ -82,6 +87,7 @@ class SchemaCompatibilityService:
 
     @staticmethod
     def _table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
+        # Table names come only from the fixed, code-owned _COMPONENT_TABLES mapping.
         return {str(row["name"]) for row in connection.execute(f'PRAGMA table_info("{table}")')}
 
     @staticmethod
@@ -178,7 +184,9 @@ class SchemaCompatibilityService:
         report = self.inspect()
         if not report.compatible:
             detail = "; ".join((*report.newer_components, *report.structural_mismatches))
-            raise RuntimeError(f"CHIEF schema is not compatible with this build: {detail or 'integrity failure'}")
+            raise RuntimeError(
+                f"CHIEF schema is not compatible with this build: {detail or 'integrity failure'}"
+            )
         return report
 
     def assert_rollback_safe(self, target_versions: dict[str, int]) -> None:
