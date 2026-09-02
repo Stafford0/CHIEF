@@ -9,8 +9,8 @@ from email.parser import BytesParser
 import pytest
 
 from chief.integrations import (
-    ConsentGrant,
     ConnectorRegistry,
+    ConsentGrant,
     IdempotencyMetadata,
 )
 from chief.integrations.gmail_drafts import GmailDraftConnector
