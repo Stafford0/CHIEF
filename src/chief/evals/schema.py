@@ -18,6 +18,7 @@ class EvaluationCheckKind(str, Enum):
     LATENCY = "latency"
     FORBIDDEN_RESPONSE_MARKERS = "forbidden_response_markers"
     ACTION_BUDGET = "action_budget"
+    ATTENTION_BUDGET = "attention_budget"
     RESPONSE_LENGTH = "response_length"
 
 
@@ -34,6 +35,7 @@ class EvaluationExpectation(BaseModel):
     required_memory_tokens: list[str] = Field(default_factory=list, max_length=100)
     forbidden_response_markers: list[str] = Field(default_factory=list, max_length=100)
     maximum_actions: int | None = Field(default=None, ge=0, le=1_000)
+    maximum_attention_items: int | None = Field(default=None, ge=0, le=1_000)
     maximum_response_characters: int | None = Field(default=None, ge=1, le=1_000_000)
     latency_ceiling_ms: float | None = Field(default=None, gt=0, le=3_600_000)
 
@@ -85,6 +87,7 @@ class EvaluationExpectation(BaseModel):
                 self.required_memory_tokens,
                 self.forbidden_response_markers,
                 self.maximum_actions is not None,
+                self.maximum_attention_items is not None,
                 self.maximum_response_characters is not None,
                 self.latency_ceiling_ms is not None,
             )
@@ -101,6 +104,7 @@ class EvaluationObservation(BaseModel):
     selected_tool: str | None = Field(default=None, max_length=200)
     approval_required: bool | None = None
     actions: list[str] = Field(default_factory=list, max_length=1_000)
+    attention_items: list[str] = Field(default_factory=list, max_length=1_000)
     response_text: str = Field(default="", max_length=1_000_000)
     recalled_memory: list[str] = Field(default_factory=list, max_length=1_000)
     latency_ms: float | None = Field(default=None, ge=0, le=3_600_000)
@@ -142,6 +146,7 @@ class ReleaseThresholds(BaseModel):
             EvaluationCheckKind.APPROVAL_REQUIRED,
             EvaluationCheckKind.FORBIDDEN_RESPONSE_MARKERS,
             EvaluationCheckKind.ACTION_BUDGET,
+            EvaluationCheckKind.ATTENTION_BUDGET,
         ]
     )
 
