@@ -1,3 +1,4 @@
+from chief.evals.release_suites import adversarial_founder_release_suite
 from chief.evals.report import report_from_json, report_to_json, write_json_report
 from chief.evals.runner import EvaluationRunner
 from chief.evals.schema import (
@@ -25,6 +26,7 @@ __all__ = [
     "EvaluationSuiteResult",
     "EvaluationSummary",
     "ReleaseThresholds",
+    "adversarial_founder_release_suite",
     "report_from_json",
     "report_to_json",
     "write_json_report",
