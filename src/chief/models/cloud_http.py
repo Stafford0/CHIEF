@@ -36,5 +36,5 @@ def post_json(
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeError("Cloud model provider returned malformed JSON.") from exc
     if not isinstance(decoded, dict):
-        raise RuntimeError("Cloud model provider returned an unexpected JSON shape.")
+        raise TypeError("Cloud model provider returned an unexpected JSON shape.")
     return status, decoded
