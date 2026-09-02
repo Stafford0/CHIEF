@@ -150,7 +150,10 @@ class SQLiteRecoveryService:
             staged_sha256=digest,
             created_at=datetime.now(UTC),
         )
-        marker.write_text(json.dumps(restore.as_dict(), indent=2, sort_keys=True), encoding="utf-8")
+        marker.write_text(
+            json.dumps(restore.as_dict(), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
         return restore
 
     def verify_staged_restore(self) -> StagedRestore:
@@ -170,3 +173,40 @@ class SQLiteRecoveryService:
             staged_sha256=digest,
             created_at=datetime.fromisoformat(str(raw["created_at"])),
         )
+
+    def activate_staged_restore(self, *, lock_timeout_seconds: float = 0.25) -> Path | None:
+        """Activate a verified stage only when the live database can be locked exclusively."""
+
+        if lock_timeout_seconds < 0:
+            raise ValueError("lock_timeout_seconds cannot be negative")
+        restore = self.verify_staged_restore()
+        staged = Path(restore.staged)
+        previous: Path | None = None
+
+        if self.database_path.exists():
+            connection = sqlite3.connect(self.database_path, timeout=lock_timeout_seconds)
+            try:
+                connection.execute(f"PRAGMA busy_timeout = {int(lock_timeout_seconds * 1000)}")
+                connection.execute("BEGIN EXCLUSIVE")
+                connection.rollback()
+            except sqlite3.OperationalError as exc:
+                raise RuntimeError(
+                    "Live CHIEF database is busy. Stop API/runtime processes before restore activation."
+                ) from exc
+            finally:
+                connection.close()
+            timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            previous = self.database_path.with_suffix(
+                self.database_path.suffix + f".pre-restore-{timestamp}"
+            )
+            shutil.copy2(self.database_path, previous)
+            self._integrity(previous)
+
+        self._integrity(staged)
+        if self._digest(staged) != restore.staged_sha256:
+            raise RuntimeError("Staged restore changed after verification.")
+        os.replace(staged, self.database_path)
+        self._integrity(self.database_path)
+        marker = staged.with_suffix(staged.suffix + ".json")
+        marker.unlink(missing_ok=True)
+        return previous
