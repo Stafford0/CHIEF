@@ -1,7 +1,8 @@
 """Read-only GitHub evidence connector.
 
 The adapter deliberately exposes observation scopes only. Credentials are supplied lazily by a
-callable and are never persisted by CHIEF.
+callable and are never persisted by CHIEF. Incremental cursors are timestamp based and remain
+provider-independent through the shared SyncCursor contract.
 """
 
 from __future__ import annotations
@@ -43,6 +44,16 @@ def _parse_time(value: object, fallback: datetime) -> datetime:
     return datetime.fromisoformat(value).astimezone(UTC)
 
 
+def _cursor_time(cursor: SyncCursor | None) -> datetime | None:
+    if cursor is None:
+        return None
+    try:
+        value = datetime.fromisoformat(cursor.value).astimezone(UTC)
+    except ValueError as exc:
+        raise ValueError("GitHub sync cursor must contain an ISO-8601 timestamp") from exc
+    return value
+
+
 def _rate_limit(headers: Mapping[str, str]) -> RateLimitMetadata | None:
     lowered = {key.lower(): value for key, value in headers.items()}
     try:
@@ -64,7 +75,9 @@ def _rate_limit(headers: Mapping[str, str]) -> RateLimitMetadata | None:
     return RateLimitMetadata(limit=limit, remaining=remaining, reset_at=reset_at)
 
 
-def _default_transport(url: str, headers: Mapping[str, str]) -> tuple[int, Any, Mapping[str, str], float]:
+def _default_transport(
+    url: str, headers: Mapping[str, str]
+) -> tuple[int, Any, Mapping[str, str], float]:
     request = Request(url, headers=dict(headers), method="GET")
     started = time.perf_counter()
     try:
@@ -92,7 +105,9 @@ class GitHubReadOnlyConnector:
         connector_id="github",
         display_name="GitHub",
         description="Read-only repository, commit, issue, and pull-request evidence.",
-        capabilities=frozenset({ConnectorCapability.READ}),
+        capabilities=frozenset(
+            {ConnectorCapability.READ, ConnectorCapability.INCREMENTAL_SYNC}
+        ),
         scopes=(
             ConnectorScope("repositories.read", ScopeAccess.READ, "Read repository metadata."),
             ConnectorScope("commits.read", ScopeAccess.READ, "Read recent repository commits."),
@@ -113,7 +128,9 @@ class GitHubReadOnlyConnector:
         if not repositories:
             raise ValueError("at least one GitHub repository must be configured")
         for repository in repositories:
-            if repository.count("/") != 1 or not all(part.strip() for part in repository.split("/")):
+            if repository.count("/") != 1 or not all(
+                part.strip() for part in repository.split("/")
+            ):
                 raise ValueError("GitHub repositories must use owner/name form")
         if not api_base.startswith("https://"):
             raise ValueError("GitHub API base must use HTTPS")
@@ -138,14 +155,19 @@ class GitHubReadOnlyConnector:
             headers["Authorization"] = f"Bearer {token}"
         return headers
 
-    def _get(self, path: str, *, query: Mapping[str, object] | None = None) -> tuple[Any, Mapping[str, str], float]:
+    def _get(
+        self, path: str, *, query: Mapping[str, object] | None = None
+    ) -> tuple[Any, Mapping[str, str], float]:
         url = f"{self._api_base}{path}"
         if query:
-            url = f"{url}?{urlencode({key: value for key, value in query.items() if value is not None})}"
+            encoded = urlencode({key: value for key, value in query.items() if value is not None})
+            url = f"{url}?{encoded}"
         status, payload, headers, latency_ms = self._transport(url, self._headers())
         if not 200 <= status < 300:
             message = payload.get("message") if isinstance(payload, Mapping) else None
-            raise ConnectionError(f"GitHub API returned HTTP {status}: {message or 'request failed'}")
+            raise ConnectionError(
+                f"GitHub API returned HTTP {status}: {message or 'request failed'}"
+            )
         return payload, headers, latency_ms
 
     def health(self) -> ConnectorHealth:
@@ -176,14 +198,20 @@ class GitHubReadOnlyConnector:
         cursor: SyncCursor | None = None,
         limit: int = 100,
     ) -> ConnectorReadResult:
-        if cursor is not None:
-            raise ValueError("GitHub connector does not yet support incremental cursors")
         if not 1 <= limit <= 1000:
             raise ValueError("read limit must be between 1 and 1000")
         if self.manifest.scope(scope) is None:
             raise PermissionError(f"undeclared GitHub scope: {scope}")
+        if cursor is not None and (
+            cursor.connector_id != "github" or cursor.scope != scope
+        ):
+            raise ValueError("GitHub sync cursor must match connector and scope")
 
+        since = _cursor_time(cursor)
         retrieved_at = self._clock()
+        if since is not None and since > retrieved_at:
+            raise ValueError("GitHub sync cursor cannot be in the future")
+
         evidence: list[EvidenceRecord] = []
         latest_rate_limit: RateLimitMetadata | None = None
         remaining = limit
@@ -196,12 +224,23 @@ class GitHubReadOnlyConnector:
                 scope,
                 limit=remaining,
                 retrieved_at=retrieved_at,
+                since=since,
             )
             evidence.extend(records)
             remaining = limit - len(evidence)
             latest_rate_limit = _rate_limit(headers) or latest_rate_limit
 
-        return ConnectorReadResult(evidence=tuple(evidence), rate_limit=latest_rate_limit)
+        next_cursor = SyncCursor(
+            connector_id="github",
+            scope=scope,
+            value=retrieved_at.isoformat(),
+            updated_at=retrieved_at,
+        )
+        return ConnectorReadResult(
+            evidence=tuple(evidence),
+            next_cursor=next_cursor,
+            rate_limit=latest_rate_limit,
+        )
 
     def _read_repository_scope(
         self,
@@ -210,6 +249,7 @@ class GitHubReadOnlyConnector:
         *,
         limit: int,
         retrieved_at: datetime,
+        since: datetime | None,
     ) -> tuple[list[EvidenceRecord], Mapping[str, str]]:
         per_page = min(limit, 100)
         if scope == "repositories.read":
@@ -218,21 +258,38 @@ class GitHubReadOnlyConnector:
             record_type = "repository"
         elif scope == "commits.read":
             payload, headers, _ = self._get(
-                f"/repos/{repository}/commits", query={"per_page": per_page}
+                f"/repos/{repository}/commits",
+                query={
+                    "per_page": per_page,
+                    "since": since.isoformat().replace("+00:00", "Z") if since else None,
+                },
             )
             items = payload
             record_type = "commit"
         elif scope == "issues.read":
             payload, headers, _ = self._get(
                 f"/repos/{repository}/issues",
-                query={"state": "all", "sort": "updated", "direction": "desc", "per_page": per_page},
+                query={
+                    "state": "all",
+                    "sort": "updated",
+                    "direction": "desc",
+                    "per_page": per_page,
+                    "since": since.isoformat().replace("+00:00", "Z") if since else None,
+                },
             )
+            if not isinstance(payload, list):
+                raise ConnectionError("GitHub returned an unexpected response shape")
             items = [item for item in payload if "pull_request" not in item]
             record_type = "issue"
         elif scope == "pulls.read":
             payload, headers, _ = self._get(
                 f"/repos/{repository}/pulls",
-                query={"state": "all", "sort": "updated", "direction": "desc", "per_page": per_page},
+                query={
+                    "state": "all",
+                    "sort": "updated",
+                    "direction": "desc",
+                    "per_page": per_page,
+                },
             )
             items = payload
             record_type = "pull_request"
@@ -246,6 +303,8 @@ class GitHubReadOnlyConnector:
             for item in items[:limit]
             if isinstance(item, Mapping)
         ]
+        if since is not None:
+            records = [item for item in records if item.observed_at > since]
         return records, headers
 
     def _capture(
@@ -258,15 +317,21 @@ class GitHubReadOnlyConnector:
     ) -> EvidenceRecord:
         if record_type == "repository":
             record_id = str(item.get("id", repository))
-            observed_at = _parse_time(item.get("updated_at") or item.get("pushed_at"), retrieved_at)
+            observed_at = _parse_time(
+                item.get("updated_at") or item.get("pushed_at"), retrieved_at
+            )
         elif record_type == "commit":
             record_id = str(item.get("sha", "unknown"))
             commit = item.get("commit") if isinstance(item.get("commit"), Mapping) else {}
-            committer = commit.get("committer") if isinstance(commit.get("committer"), Mapping) else {}
+            committer = (
+                commit.get("committer") if isinstance(commit.get("committer"), Mapping) else {}
+            )
             observed_at = _parse_time(committer.get("date"), retrieved_at)
         else:
             record_id = str(item.get("id") or item.get("number") or "unknown")
-            observed_at = _parse_time(item.get("updated_at") or item.get("created_at"), retrieved_at)
+            observed_at = _parse_time(
+                item.get("updated_at") or item.get("created_at"), retrieved_at
+            )
 
         content = json.dumps(item, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         if record_type == "repository" and item.get("private") is False:
