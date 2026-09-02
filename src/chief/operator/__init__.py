@@ -1,5 +1,13 @@
-"""Operator-facing recovery and health primitives."""
+"""Operator-facing recovery, health, and trace primitives."""
 
-from .recovery import EventRecoveryAction, OperatorStatus, OperatorRecoveryService
+from .recovery import EventRecoveryAction, OperatorRecoveryService, OperatorStatus
+from .trace import OperatorTrace, OperatorTraceService, TraceAuditEvent
 
-__all__ = ["EventRecoveryAction", "OperatorRecoveryService", "OperatorStatus"]
+__all__ = [
+    "EventRecoveryAction",
+    "OperatorRecoveryService",
+    "OperatorStatus",
+    "OperatorTrace",
+    "OperatorTraceService",
+    "TraceAuditEvent",
+]
