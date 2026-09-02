@@ -233,6 +233,28 @@ class EvaluationRunner:
                 )
             )
 
+        if expectation.maximum_attention_items is not None:
+            attention_count = len(observation.attention_items)
+            passed = attention_count <= expectation.maximum_attention_items
+            checks.append(
+                EvaluationCheckResult(
+                    kind=EvaluationCheckKind.ATTENTION_BUDGET,
+                    passed=passed,
+                    message=(
+                        "Founder attention stayed within the configured budget."
+                        if passed
+                        else "Founder attention exceeded the configured budget."
+                    ),
+                    expected={
+                        "maximum_attention_items": expectation.maximum_attention_items
+                    },
+                    observed={
+                        "attention_count": attention_count,
+                        "attention_items": observation.attention_items,
+                    },
+                )
+            )
+
         if expectation.maximum_response_characters is not None:
             response_characters = len(observation.response_text)
             passed = response_characters <= expectation.maximum_response_characters
