@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from chief.api.approvals import create_approvals_router
 from chief.api.integrations import create_integrations_router
 from chief.api.operating import create_operating_router as _create_operating_router
 from chief.api.portfolio import create_portfolio_router
@@ -23,7 +24,12 @@ def _secret(name: str) -> str | None:
 
 
 def create_operating_router(*args: Any, **kwargs: Any):
-    """Compose operating domains plus configured, consent-gated integrations."""
+    """Compose operating domains, consented integrations, and owner approval controls."""
+
+    session_store = kwargs.pop("session_store", None)
+    tool_registry = kwargs.pop("tool_registry", None)
+    execution_control = kwargs.pop("execution_control", None)
+    configured_execution_enabled = kwargs.pop("configured_execution_enabled", True)
 
     router = _create_operating_router(*args, **kwargs)
     business_store = kwargs.get("business_store")
@@ -77,10 +83,20 @@ def create_operating_router(*args: Any, **kwargs: Any):
             evidence_plane=evidence_plane,
         )
     )
+    if session_store is not None and tool_registry is not None and execution_control is not None:
+        router.include_router(
+            create_approvals_router(
+                session_store=session_store,
+                tool_registry=tool_registry,
+                execution_control=execution_control,
+                configured_execution_enabled=bool(configured_execution_enabled),
+            )
+        )
     return router
 
 
 __all__ = [
+    "create_approvals_router",
     "create_integrations_router",
     "create_operating_router",
     "create_portfolio_router",
