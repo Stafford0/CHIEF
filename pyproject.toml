@@ -27,6 +27,7 @@ windows = [
 [project.scripts]
 chief-runtime = "chief.runtime.worker:main"
 chief-windows-service = "chief.runtime.windows_service:main"
+chief-recovery = "chief.ops.recovery_cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/chief"]
