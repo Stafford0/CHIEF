@@ -61,7 +61,7 @@ class AnthropicMessagesProvider(ModelProvider):
     def _text(payload: dict[str, Any]) -> str:
         content = payload.get("content")
         if not isinstance(content, list):
-            raise RuntimeError("Anthropic response did not contain content blocks.")
+            raise TypeError("Anthropic response did not contain content blocks.")
         parts = [
             block["text"]
             for block in content
