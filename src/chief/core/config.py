@@ -27,6 +27,10 @@ def _bool_env(name: str, default: bool) -> bool:
     raise ValueError(f"{name} must be true or false.")
 
 
+def _csv_env(name: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in os.getenv(name, "").split(",") if item.strip())
+
+
 @dataclass(frozen=True)
 class Settings:
     """Validated runtime settings; secrets stay in the environment."""
@@ -45,23 +49,28 @@ class Settings:
     execution_enabled: bool = True
     remote_rate_limit_per_minute: int = 120
     max_request_bytes: int = 2_000_000
+    github_repositories: tuple[str, ...] = ()
+    github_token: str | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
-        origins = tuple(
-            x.strip() for x in os.getenv("CHIEF_CORS_ORIGINS", "").split(",") if x.strip()
-        )
+        origins = _csv_env("CHIEF_CORS_ORIGINS")
         lan = _bool_env("CHIEF_ALLOW_PRIVATE_LAN_UI", False)
         api_token = os.getenv("CHIEF_API_TOKEN", "").strip() or None
-        trusted_hosts = tuple(
-            item.strip() for item in os.getenv("CHIEF_TRUSTED_HOSTS", "").split(",") if item.strip()
-        )
+        trusted_hosts = _csv_env("CHIEF_TRUSTED_HOSTS")
+        github_repositories = _csv_env("CHIEF_GITHUB_REPOSITORIES")
+        github_token = os.getenv("CHIEF_GITHUB_TOKEN", "").strip() or None
         if api_token is not None and len(api_token.encode("utf-8")) < 32:
             raise ValueError("CHIEF_API_TOKEN must be at least 32 bytes.")
         if lan and api_token is None:
             raise ValueError(
                 "CHIEF_API_TOKEN is required when CHIEF_ALLOW_PRIVATE_LAN_UI is enabled."
             )
+        for repository in github_repositories:
+            if repository.count("/") != 1 or not all(
+                part.strip() for part in repository.split("/", maxsplit=1)
+            ):
+                raise ValueError("CHIEF_GITHUB_REPOSITORIES entries must use owner/name form.")
         return cls(
             environment=os.getenv("CHIEF_ENVIRONMENT", "development"),
             ollama_url=os.getenv("CHIEF_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/"),
@@ -88,4 +97,6 @@ class Settings:
             max_request_bytes=_int_env(
                 "CHIEF_MAX_REQUEST_BYTES", 2_000_000, minimum=1_024, maximum=100_000_000
             ),
+            github_repositories=github_repositories,
+            github_token=github_token,
         )
