@@ -12,6 +12,7 @@ from chief.voice.schema import (
     VoiceProcessingLocation,
     VoiceState,
 )
+from chief.voice.session import VoiceSessionCoordinator, VoiceSessionEvent
 from chief.voice.state_machine import (
     LEGAL_TRANSITIONS,
     CancellationToken,
@@ -36,6 +37,8 @@ __all__ = [
     "VoiceCancelled",
     "VoicePrivacyPolicy",
     "VoiceProcessingLocation",
+    "VoiceSessionCoordinator",
+    "VoiceSessionEvent",
     "VoiceState",
     "VoiceStateMachine",
     "VoiceTransition",
