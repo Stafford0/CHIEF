@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from chief.core.config import Settings
 from chief.models.base import ModelPrivacy, RouteRequirements
 from chief.models.cloud_factory import build_cloud_model_router
+
+SecretGetter = Callable[[str], str | None]
 
 
 class CloudGenerateRequest(BaseModel):
@@ -17,15 +21,24 @@ class CloudGenerateRequest(BaseModel):
     max_cost_tier: int | None = Field(default=None, ge=0, le=100)
 
 
-def create_models_router(*, settings: Settings | None = None) -> APIRouter:
+def create_models_router(
+    *,
+    settings: Settings | None = None,
+    secret_getter: SecretGetter | None = None,
+) -> APIRouter:
     """Expose cloud reasoning only through an explicit per-call privacy gate."""
 
     settings = settings or Settings.from_env()
     router = APIRouter(tags=["models"])
 
+    def build_router():
+        if secret_getter is None:
+            return build_cloud_model_router(settings)
+        return build_cloud_model_router(settings, secret_getter=secret_getter)
+
     @router.get("/models/cloud")
     def cloud_status() -> dict[str, object]:
-        model_router = build_cloud_model_router(settings)
+        model_router = build_router()
         return {
             "configured": model_router is not None,
             "global_fallback_enabled": settings.cloud_model_fallback_enabled,
@@ -45,7 +58,7 @@ def create_models_router(*, settings: Settings | None = None) -> APIRouter:
                 status_code=403,
                 detail="This request did not explicitly authorize cloud transmission.",
             )
-        model_router = build_cloud_model_router(settings)
+        model_router = build_router()
         if model_router is None:
             raise HTTPException(status_code=503, detail="No configured cloud model provider is available.")
         try:
