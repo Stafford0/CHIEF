@@ -50,6 +50,7 @@ class Settings:
     allow_private_lan_ui: bool = False
     api_token: str | None = None
     trusted_hosts: tuple[str, ...] = ("127.0.0.1", "localhost", "testserver")
+    tailscale_allowed_logins: tuple[str, ...] = ()
     execution_enabled: bool = True
     remote_rate_limit_per_minute: int = 120
     max_request_bytes: int = 2_000_000
@@ -62,6 +63,9 @@ class Settings:
         lan = _bool_env("CHIEF_ALLOW_PRIVATE_LAN_UI", False)
         api_token = os.getenv("CHIEF_API_TOKEN", "").strip() or None
         trusted_hosts = _csv_env("CHIEF_TRUSTED_HOSTS")
+        tailscale_allowed_logins = tuple(
+            login.casefold() for login in _csv_env("CHIEF_TAILSCALE_ALLOWED_LOGINS")
+        )
         github_repositories = _csv_env("CHIEF_GITHUB_REPOSITORIES")
         github_token = os.getenv("CHIEF_GITHUB_TOKEN", "").strip() or None
         openai_model = os.getenv("CHIEF_OPENAI_MODEL", "").strip() or None
@@ -107,6 +111,7 @@ class Settings:
             allow_private_lan_ui=lan,
             api_token=api_token,
             trusted_hosts=trusted_hosts or cls.trusted_hosts,
+            tailscale_allowed_logins=tailscale_allowed_logins,
             execution_enabled=_bool_env("CHIEF_EXECUTION_ENABLED", True),
             remote_rate_limit_per_minute=_int_env(
                 "CHIEF_REMOTE_RATE_LIMIT_PER_MINUTE", 120, minimum=1, maximum=10_000

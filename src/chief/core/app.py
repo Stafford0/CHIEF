@@ -100,10 +100,11 @@ app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=settings.max_reque
 logger = logging.getLogger("chief.api")
 _PUBLIC_PATHS = frozenset({"/health"})
 _LAN_ORIGIN = re.compile(_PRIVATE_LAN_ORIGIN_PATTERN)
+_TAILSCALE_IPV4_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 _remote_rate_limiter = SlidingWindowRateLimiter(settings.remote_rate_limit_per_minute)
 
 
-def _is_loopback_client(request: Request) -> bool:
+def _transport_is_loopback(request: Request) -> bool:
     host = request.client.host if request.client else ""
     if host == "testclient":
         return True
@@ -113,13 +114,21 @@ def _is_loopback_client(request: Request) -> bool:
         return host.casefold() == "localhost"
 
 
+def _is_loopback_client(request: Request) -> bool:
+    # Tailscale Serve strips spoofed identity headers before adding its own. Treat
+    # an identified request as remote so LAN policy and request limits still apply.
+    return _transport_is_loopback(request) and _tailscale_login(request) is None
+
+
 def _is_private_client(request: Request) -> bool:
     host = request.client.host if request.client else ""
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
         return False
-    return address.is_private
+    return address.is_private or (
+        address in _TAILSCALE_IPV4_NETWORK and _tailscale_login(request) is not None
+    )
 
 
 def _bearer_token(request: Request) -> str | None:
@@ -127,6 +136,14 @@ def _bearer_token(request: Request) -> str | None:
     if scheme.casefold() != "bearer" or not value:
         return None
     return value
+
+
+def _tailscale_login(request: Request) -> str | None:
+    # This header is authoritative only for the production service because that
+    # service is forced to listen on loopback and Tailscale Serve strips any
+    # client-supplied copy before adding the authenticated identity.
+    login = request.headers.get("tailscale-user-login", "").strip().casefold()
+    return login or None
 
 
 def _origin_allowed(origin: str) -> bool:
@@ -143,6 +160,7 @@ async def operational_headers(request: Request, call_next):
     started = time.perf_counter()
     is_public = request.url.path in _PUBLIC_PATHS or request.method == "OPTIONS"
     is_loopback = _is_loopback_client(request)
+    tailscale_login = _tailscale_login(request)
     response = None
     rate_limit: RateLimitDecision | None = None
 
@@ -158,6 +176,18 @@ async def operational_headers(request: Request, call_next):
         response = JSONResponse(
             status_code=403,
             content={"detail": "Only private-network clients are permitted in LAN mode."},
+        )
+
+    if (
+        response is None
+        and not is_public
+        and tailscale_login is not None
+        and settings.tailscale_allowed_logins
+        and tailscale_login not in settings.tailscale_allowed_logins
+    ):
+        response = JSONResponse(
+            status_code=403,
+            content={"detail": "This Tailscale identity is not enrolled for CHIEF."},
         )
 
     if response is None and not is_public and not is_loopback:
@@ -195,9 +225,14 @@ async def operational_headers(request: Request, call_next):
     if settings.api_token is None:
         request.state.actor_id = "local"
     else:
-        request.state.actor_id = (
-            "operator:" + hashlib.sha256(settings.api_token.encode("utf-8")).hexdigest()[:16]
-        )
+        operator_id = hashlib.sha256(settings.api_token.encode("utf-8")).hexdigest()[:16]
+        if tailscale_login is None:
+            request.state.actor_id = "operator:" + operator_id
+        else:
+            client_host = request.client.host if request.client else "unknown"
+            device_identity = f"{tailscale_login}\0{client_host}"
+            identity_id = hashlib.sha256(device_identity.encode("utf-8")).hexdigest()[:16]
+            request.state.actor_id = f"tailscale:{identity_id}:operator:{operator_id}"
 
     if response is None:
         response = await call_next(request)
