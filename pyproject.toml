@@ -20,6 +20,13 @@ dev = [
   "ruff>=0.6",
   "httpx2",
 ]
+windows = [
+  "pywin32>=311; platform_system == 'Windows'",
+]
+
+[project.scripts]
+chief-runtime = "chief.runtime.worker:main"
+chief-windows-service = "chief.runtime.windows_service:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/chief"]
