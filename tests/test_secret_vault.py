@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from chief.api.secrets import create_secrets_router
 from chief.audit.sqlite import SQLiteAuditLog
-from chief.security.secrets import EncryptedSecretStore, SecretResolver
+from chief.security.secrets import EncryptedSecretStore, SecretResolver, metadata_json
 
 
 class TestCipher:
@@ -47,7 +47,7 @@ def test_vault_metadata_never_contains_secret(tmp_path) -> None:
     secret = "do-not-render-this"
     store.put("ANTHROPIC_API_KEY", secret)
 
-    rendered = json.dumps([item.__dict__ for item in store.list_metadata()], default=str)
+    rendered = json.dumps([metadata_json(item) for item in store.list_metadata()])
     assert secret not in rendered
     assert "ANTHROPIC_API_KEY" in rendered
 
