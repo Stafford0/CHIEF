@@ -36,6 +36,23 @@ def test_dashboard_embeds_the_owner_scoped_portfolio_contract() -> None:
     assert runtime["portfolio_onboarding"] == portfolio.json()["onboarding"]
 
 
+def test_dashboard_degrades_when_host_telemetry_fails(monkeypatch) -> None:
+    from chief.core import dashboard as dashboard_module
+
+    def unavailable(_project_root):
+        raise PermissionError("service identity cannot read a host metric")
+
+    monkeypatch.setattr(dashboard_module, "collect_dashboard_snapshot", unavailable)
+
+    response = client.get("/dashboard")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["runtime"]["api_status"] == "online"
+    assert payload["runtime"]["degraded_components"] == ["host_telemetry"]
+    assert payload["host"]["hostname"] == "unavailable"
+
+
 def test_tools_endpoint_exposes_guarded_registry() -> None:
     response = client.get("/tools")
 
