@@ -17,8 +17,8 @@ from chief.business import (
     Provenance,
     ProvenanceType,
     RelationshipKind,
-    SQLiteBusinessGraphStore,
     Sensitivity,
+    SQLiteBusinessGraphStore,
 )
 from chief.integrations.registry import ConnectorRegistry
 from chief.integrations.schema import EvidenceRecord, EvidenceSensitivity, SyncCursor
