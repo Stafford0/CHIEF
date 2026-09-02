@@ -83,7 +83,6 @@ def _tool_arguments() -> dict[str, object]:
             "body": "Draft body",
         },
         "idempotency_key": "draft-approval-1",
-        "idempotency_ttl_seconds": 300,
     }
 
 
@@ -286,7 +285,7 @@ def test_model_cannot_spoof_connector_write_principal() -> None:
     )
 
     assert result.success is False
-    assert "unsupported" in (result.error or "").casefold()
+    assert "exactly" in (result.error or "").casefold()
     assert transport.posts == 0
 
 
