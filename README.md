@@ -188,6 +188,12 @@ never in source control, and use the verified recovery tooling for database back
   32 bytes and exact trusted host/origin configuration.
 - LAN mode does not add TLS. Use a private tunnel or trusted TLS reverse proxy; do not expose
   the development server directly to the public internet.
+- Tailscale Serve can terminate private HTTPS while CHIEF stays on loopback. Set
+  `CHIEF_TAILSCALE_ALLOWED_LOGINS` to the exact enrolled Tailscale login(s); identified requests
+  are treated as remote, restricted by that allowlist, assigned a source-address-bound actor,
+  and rate-limited. Keep the separate CHIEF bearer token enabled.
+- Removing a device from Tailscale revokes its network path. Rotate the CHIEF bearer token when
+  a paired browser or device is lost; Tailscale membership alone is not CHIEF authorization.
 - `CHIEF_EXECUTION_ENABLED=false` pauses tool, plan, scheduler-tick, and run-worker execution.
 - `/health` is the intentionally public liveness probe. Readiness details and all other
   endpoints require the bearer token when one is configured.

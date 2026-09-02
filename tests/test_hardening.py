@@ -75,7 +75,11 @@ def test_remote_authenticated_clients_are_rate_limited(monkeypatch):
             api_token=token,
         ),
     )
-    monkeypatch.setattr(app_module, "_remote_rate_limiter", SlidingWindowRateLimiter(1))
+    monkeypatch.setattr(
+        app_module,
+        "_remote_rate_limiter",
+        SlidingWindowRateLimiter(1, clock=lambda: 100.0),
+    )
     client = TestClient(app, client=("192.168.1.51", 50_001))
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -83,6 +87,101 @@ def test_remote_authenticated_clients_are_rate_limited(monkeypatch):
     denied = client.get("/system", headers=headers)
     assert denied.status_code == 429
     assert denied.headers["retry-after"] == "60"
+
+
+def test_tailscale_proxy_identity_is_remote_rate_limited(monkeypatch):
+    token = "t" * 32
+    monkeypatch.setattr(
+        app_module,
+        "settings",
+        replace(
+            app_module.settings,
+            allow_private_lan_ui=True,
+            api_token=token,
+            tailscale_allowed_logins=("stafford0@github",),
+        ),
+    )
+    monkeypatch.setattr(
+        app_module,
+        "_remote_rate_limiter",
+        SlidingWindowRateLimiter(1, clock=lambda: 100.0),
+    )
+    client = TestClient(app, client=("127.0.0.1", 50_003))
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Tailscale-User-Login": "Stafford0@GitHub",
+    }
+
+    assert client.get("/system", headers=headers).status_code == 200
+    denied = client.get("/system", headers=headers)
+    assert denied.status_code == 429
+    assert denied.headers["retry-after"] == "60"
+
+
+def test_unenrolled_tailscale_identity_is_denied(monkeypatch):
+    token = "t" * 32
+    monkeypatch.setattr(
+        app_module,
+        "settings",
+        replace(
+            app_module.settings,
+            allow_private_lan_ui=True,
+            api_token=token,
+            tailscale_allowed_logins=("stafford0@github",),
+        ),
+    )
+    client = TestClient(app, client=("127.0.0.1", 50_004))
+
+    response = client.get(
+        "/system",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Tailscale-User-Login": "intruder@example.com",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "This Tailscale identity is not enrolled for CHIEF."
+
+
+def test_tailscale_cgnat_client_is_permitted_in_protected_lan_mode(monkeypatch):
+    token = "t" * 32
+    monkeypatch.setattr(
+        app_module,
+        "settings",
+        replace(
+            app_module.settings,
+            allow_private_lan_ui=True,
+            api_token=token,
+            tailscale_allowed_logins=("stafford0@github",),
+        ),
+    )
+    client = TestClient(app, client=("100.67.211.82", 50_005))
+
+    response = client.get(
+        "/system",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Tailscale-User-Login": "stafford0@github",
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_unidentified_cgnat_client_is_denied(monkeypatch):
+    token = "t" * 32
+    monkeypatch.setattr(
+        app_module,
+        "settings",
+        replace(app_module.settings, allow_private_lan_ui=True, api_token=token),
+    )
+    client = TestClient(app, client=("100.67.211.83", 50_006))
+
+    response = client.get("/system", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Only private-network clients are permitted in LAN mode."
 
 
 def test_lan_mode_still_denies_public_network_clients(monkeypatch):

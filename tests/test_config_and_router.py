@@ -58,6 +58,20 @@ def test_private_lan_requires_strong_api_token(monkeypatch):
         Settings.from_env()
 
 
+def test_tailscale_allowed_logins_are_normalized(monkeypatch):
+    monkeypatch.setenv(
+        "CHIEF_TAILSCALE_ALLOWED_LOGINS",
+        "Stafford0@GitHub, operator@example.com",
+    )
+
+    settings = Settings.from_env()
+
+    assert settings.tailscale_allowed_logins == (
+        "stafford0@github",
+        "operator@example.com",
+    )
+
+
 def test_api_token_rejects_short_secret(monkeypatch):
     monkeypatch.setenv("CHIEF_API_TOKEN", "too-short")
     with pytest.raises(ValueError, match="at least 32 bytes"):
