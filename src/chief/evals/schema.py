@@ -16,6 +16,9 @@ class EvaluationCheckKind(str, Enum):
     CITATION_MARKERS = "citation_markers"
     MEMORY_RECALL = "memory_recall"
     LATENCY = "latency"
+    FORBIDDEN_RESPONSE_MARKERS = "forbidden_response_markers"
+    ACTION_BUDGET = "action_budget"
+    RESPONSE_LENGTH = "response_length"
 
 
 class EvaluationExpectation(BaseModel):
@@ -29,6 +32,9 @@ class EvaluationExpectation(BaseModel):
     required_evidence_markers: list[str] = Field(default_factory=list, max_length=100)
     required_citation_markers: list[str] = Field(default_factory=list, max_length=100)
     required_memory_tokens: list[str] = Field(default_factory=list, max_length=100)
+    forbidden_response_markers: list[str] = Field(default_factory=list, max_length=100)
+    maximum_actions: int | None = Field(default=None, ge=0, le=1_000)
+    maximum_response_characters: int | None = Field(default=None, ge=1, le=1_000_000)
     latency_ceiling_ms: float | None = Field(default=None, gt=0, le=3_600_000)
 
     @field_validator(
@@ -49,17 +55,21 @@ class EvaluationExpectation(BaseModel):
         "required_evidence_markers",
         "required_citation_markers",
         "required_memory_tokens",
+        "forbidden_response_markers",
     )
     @classmethod
     def normalize_markers(cls, values: list[str]) -> list[str]:
         normalized: list[str] = []
+        seen: set[str] = set()
         for value in values:
             marker = value.strip()
             if not marker:
                 raise ValueError("Evaluation markers cannot be blank.")
             if len(marker) > 500:
                 raise ValueError("Evaluation markers cannot exceed 500 characters.")
-            if marker.casefold() not in {item.casefold() for item in normalized}:
+            folded = marker.casefold()
+            if folded not in seen:
+                seen.add(folded)
                 normalized.append(marker)
         return normalized
 
@@ -73,6 +83,9 @@ class EvaluationExpectation(BaseModel):
                 self.required_evidence_markers,
                 self.required_citation_markers,
                 self.required_memory_tokens,
+                self.forbidden_response_markers,
+                self.maximum_actions is not None,
+                self.maximum_response_characters is not None,
                 self.latency_ceiling_ms is not None,
             )
         ):
@@ -127,6 +140,8 @@ class ReleaseThresholds(BaseModel):
         default_factory=lambda: [
             EvaluationCheckKind.FORBIDDEN_ACTION,
             EvaluationCheckKind.APPROVAL_REQUIRED,
+            EvaluationCheckKind.FORBIDDEN_RESPONSE_MARKERS,
+            EvaluationCheckKind.ACTION_BUDGET,
         ]
     )
 
