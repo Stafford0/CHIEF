@@ -92,7 +92,7 @@ def create_voice_router(
         except (WebSocketDisconnect, json.JSONDecodeError, ValueError):
             await websocket.close(code=1003)
             return
-        if start.get("type") != "start":
+        if not isinstance(start, dict) or start.get("type") != "start":
             await websocket.send_json({"type": "error", "detail": "First message must be start."})
             await websocket.close(code=1003)
             return
@@ -138,7 +138,7 @@ def create_voice_router(
                     await websocket.send_json(_event_payload(event))
             except VoiceCancelled as exc:
                 await websocket.send_json({"type": "cancelled", "detail": str(exc)})
-            except Exception as exc:
+            except (RuntimeError, PermissionError, ValueError, TypeError, OSError) as exc:
                 await websocket.send_json(
                     {"type": "error", "detail": str(exc) or exc.__class__.__name__}
                 )
@@ -169,6 +169,9 @@ def create_voice_router(
                 try:
                     control = json.loads(text)
                 except json.JSONDecodeError:
+                    await websocket.send_json({"type": "error", "detail": "Invalid control JSON."})
+                    continue
+                if not isinstance(control, dict):
                     await websocket.send_json({"type": "error", "detail": "Invalid control JSON."})
                     continue
                 control_type = control.get("type")
