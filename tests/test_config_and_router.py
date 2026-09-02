@@ -24,7 +24,7 @@ class FakeProvider(ModelProvider):
     ) -> None:
         self._name = name
         self.error = error
-        self._capabilities = capabilities or ModelCapabilities()
+        self._capabilities = capabilities or ModelCapabilities(privacy=ModelPrivacy.LOCAL)
 
     @property
     def name(self) -> str:
@@ -76,6 +76,22 @@ def test_execution_kill_switch_and_rate_limit_are_validated(monkeypatch):
         Settings.from_env()
 
 
+def test_cloud_fallback_requires_an_explicit_model(monkeypatch):
+    monkeypatch.setenv("CHIEF_CLOUD_MODEL_FALLBACK_ENABLED", "true")
+    monkeypatch.delenv("CHIEF_OPENAI_MODEL", raising=False)
+    monkeypatch.delenv("CHIEF_ANTHROPIC_MODEL", raising=False)
+    with pytest.raises(ValueError, match="requires CHIEF_OPENAI_MODEL"):
+        Settings.from_env()
+
+
+def test_cloud_fallback_is_opt_in(monkeypatch):
+    monkeypatch.delenv("CHIEF_CLOUD_MODEL_FALLBACK_ENABLED", raising=False)
+    monkeypatch.setenv("CHIEF_OPENAI_MODEL", "configured-model")
+    settings = Settings.from_env()
+    assert settings.cloud_model_fallback_enabled is False
+    assert settings.openai_model == "configured-model"
+
+
 def test_router_falls_back_and_records_attempts():
     router = ModelRouter([FakeProvider("bad", "offline"), FakeProvider("good")])
     assert router.generate("hello").provider == "good"
@@ -105,6 +121,29 @@ def test_router_filters_by_capability_and_privacy():
     )
 
     assert router.generate("hello", requirements=requirements).provider == "local"
+
+
+def test_router_rejects_cloud_without_per_route_authorization():
+    cloud = FakeProvider("cloud", capabilities=ModelCapabilities(privacy=ModelPrivacy.CLOUD))
+    router = ModelRouter([cloud])
+
+    with pytest.raises(RuntimeError, match="No configured model provider"):
+        router.generate(
+            "private context",
+            requirements=RouteRequirements(
+                allowed_privacy=frozenset({ModelPrivacy.CLOUD}),
+                cloud_authorized=False,
+            ),
+        )
+
+    result = router.generate(
+        "explicitly shareable context",
+        requirements=RouteRequirements(
+            allowed_privacy=frozenset({ModelPrivacy.CLOUD}),
+            cloud_authorized=True,
+        ),
+    )
+    assert result.provider == "cloud"
 
 
 def test_router_opens_and_recovers_circuit_breaker():
