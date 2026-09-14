@@ -120,6 +120,8 @@ class SpecialistOrchestrator:
             return False
         if agent.authority.expires_at is None or agent.authority.expires_at <= now:
             return False
+        if agent.budget.max_parallel_runs < 1 or agent.budget.monthly_token_limit < 1:
+            return False
         return True
 
     @staticmethod
@@ -189,7 +191,10 @@ class SpecialistOrchestrator:
             if not self._is_execution_ready(requested, now=now):
                 return AgentRouteDecision(
                     status=RoutingStatus.REQUESTED_AGENT_UNAVAILABLE,
-                    reason="The requested agent is not execution-ready under current authority.",
+                    reason=(
+                        "The requested agent is not execution-ready under current authority, "
+                        "kill-switch, lifecycle, or budget controls."
+                    ),
                 )
             if not self._has_required_tools(requested, required_tools):
                 return AgentRouteDecision(
@@ -218,7 +223,8 @@ class SpecialistOrchestrator:
                 status=RoutingStatus.NO_ELIGIBLE_AGENT,
                 reason=(
                     "No registered specialist is active, within scope, execution-enabled, "
-                    "inside its authority window, and equipped with the required tools."
+                    "inside its authority window, funded for model work, and equipped with "
+                    "the required tools."
                 ),
             )
 
