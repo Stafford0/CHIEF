@@ -120,9 +120,7 @@ class SpecialistOrchestrator:
             return False
         if agent.authority.expires_at is None or agent.authority.expires_at <= now:
             return False
-        if agent.budget.max_parallel_runs < 1 or agent.budget.monthly_token_limit < 1:
-            return False
-        return True
+        return agent.budget.max_parallel_runs >= 1 and agent.budget.monthly_token_limit >= 1
 
     @staticmethod
     def _matches_scope(agent: ManagedAgent, request: AgentRoutingRequest) -> bool:
