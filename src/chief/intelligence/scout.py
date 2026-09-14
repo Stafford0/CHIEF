@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from chief.events.scheduler import Scheduler
-from chief.events.schema import Schedule, ScheduleCadence, ScheduleStatus
+from chief.events.schema import Event, Schedule, ScheduleCadence, ScheduleStatus
 from chief.events.store import EventStore
 from chief.intelligence.evidence import ReconEvidenceBundle, ReconEvidenceService, SearchUnavailable
 from chief.intelligence.execution import _agent_digest
@@ -30,6 +30,7 @@ from chief.runs import (
     PermanentActionError,
     RetryableActionError,
     RunEngine,
+    RunRecord,
     SQLiteRunStore,
     StepSpec,
     VerificationStatus,
@@ -50,7 +51,7 @@ class ReconScoutRoutingError(ReconScoutError):
 
 
 class ReconScoutDispatchConflict(ReconScoutError):
-    """A run idempotency key or receipt is bound to different scout work."""
+    """A run, schedule, or receipt is bound to different scout work."""
 
 
 class ReconScoutCreate(BaseModel):
@@ -181,6 +182,26 @@ class ReconScoutDispatchRecord(BaseModel):
     created_at: datetime
 
 
+class ReconScoutScheduleRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schedule_id: UUID
+    owner_id: str
+    payload_digest: str
+    created_at: datetime
+
+
+class ReconScoutScheduledRunRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    run_id: UUID
+    event_id: UUID
+    schedule_id: UUID
+    owner_id: str
+    payload_digest: str
+    created_at: datetime
+
+
 class ReconScoutScheduleView(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -201,7 +222,7 @@ class ReconScoutScheduleView(BaseModel):
 
 
 class SQLiteReconScoutDispatchStore:
-    """Server-owned receipts binding scout runs to an exact authority snapshot."""
+    """Private authorization receipts for scout runs and schedules."""
 
     def __init__(self, database_path: str | Path = "data/chief.db") -> None:
         self.database_path = Path(database_path)
@@ -227,7 +248,7 @@ class SQLiteReconScoutDispatchStore:
     def _initialize(self) -> None:
         with self._connection() as connection:
             connection.execute("PRAGMA journal_mode = WAL")
-            connection.execute(
+            connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS intelligence_recon_scout_dispatches (
                     run_id TEXT PRIMARY KEY,
@@ -236,24 +257,63 @@ class SQLiteReconScoutDispatchStore:
                     payload_digest TEXT NOT NULL,
                     agent_digest TEXT NOT NULL,
                     created_at TEXT NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                """
+                );
+
                 CREATE INDEX IF NOT EXISTS ix_recon_scout_dispatch_owner_created
-                ON intelligence_recon_scout_dispatches(owner_id, created_at DESC)
+                ON intelligence_recon_scout_dispatches(owner_id, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS intelligence_recon_scout_schedules (
+                    schedule_id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    payload_digest TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_recon_scout_schedule_owner_created
+                ON intelligence_recon_scout_schedules(owner_id, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS intelligence_recon_scheduled_runs (
+                    run_id TEXT PRIMARY KEY,
+                    event_id TEXT NOT NULL UNIQUE,
+                    schedule_id TEXT NOT NULL,
+                    owner_id TEXT NOT NULL,
+                    payload_digest TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (schedule_id)
+                        REFERENCES intelligence_recon_scout_schedules(schedule_id)
+                        ON DELETE RESTRICT
+                );
                 """
             )
 
     @staticmethod
-    def _parse(row: sqlite3.Row) -> ReconScoutDispatchRecord:
+    def _parse_dispatch(row: sqlite3.Row) -> ReconScoutDispatchRecord:
         return ReconScoutDispatchRecord(
             run_id=row["run_id"],
             owner_id=row["owner_id"],
             agent_id=row["agent_id"],
             payload_digest=row["payload_digest"],
             agent_digest=row["agent_digest"],
+            created_at=row["created_at"],
+        )
+
+    @staticmethod
+    def _parse_schedule(row: sqlite3.Row) -> ReconScoutScheduleRecord:
+        return ReconScoutScheduleRecord(
+            schedule_id=row["schedule_id"],
+            owner_id=row["owner_id"],
+            payload_digest=row["payload_digest"],
+            created_at=row["created_at"],
+        )
+
+    @staticmethod
+    def _parse_scheduled_run(row: sqlite3.Row) -> ReconScoutScheduledRunRecord:
+        return ReconScoutScheduledRunRecord(
+            run_id=row["run_id"],
+            event_id=row["event_id"],
+            schedule_id=row["schedule_id"],
+            owner_id=row["owner_id"],
+            payload_digest=row["payload_digest"],
             created_at=row["created_at"],
         )
 
@@ -264,7 +324,7 @@ class SQLiteReconScoutDispatchStore:
                 (str(record.run_id),),
             ).fetchone()
             if row is not None:
-                existing = self._parse(row)
+                existing = self._parse_dispatch(row)
                 if existing != record:
                     raise ReconScoutDispatchConflict(
                         "The run is already bound to a different RECON scout dispatch."
@@ -293,7 +353,100 @@ class SQLiteReconScoutDispatchStore:
                 "SELECT * FROM intelligence_recon_scout_dispatches WHERE run_id = ?",
                 (str(run_id),),
             ).fetchone()
-        return self._parse(row) if row is not None else None
+        return self._parse_dispatch(row) if row is not None else None
+
+    def bind_schedule(self, record: ReconScoutScheduleRecord) -> ReconScoutScheduleRecord:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM intelligence_recon_scout_schedules WHERE schedule_id = ?",
+                (str(record.schedule_id),),
+            ).fetchone()
+            if row is not None:
+                existing = self._parse_schedule(row)
+                if existing != record:
+                    raise ReconScoutDispatchConflict(
+                        "The schedule is already bound to different RECON scout parameters."
+                    )
+                return existing
+            connection.execute(
+                """
+                INSERT INTO intelligence_recon_scout_schedules(
+                    schedule_id, owner_id, payload_digest, created_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (
+                    str(record.schedule_id),
+                    record.owner_id,
+                    record.payload_digest,
+                    record.created_at.astimezone(UTC).isoformat(),
+                ),
+            )
+        return record
+
+    def get_schedule(self, schedule_id: UUID) -> ReconScoutScheduleRecord | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM intelligence_recon_scout_schedules WHERE schedule_id = ?",
+                (str(schedule_id),),
+            ).fetchone()
+        return self._parse_schedule(row) if row is not None else None
+
+    def list_schedules(self, *, owner_id: str) -> list[ReconScoutScheduleRecord]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM intelligence_recon_scout_schedules
+                WHERE owner_id = ? ORDER BY created_at, schedule_id
+                """,
+                (owner_id,),
+            ).fetchall()
+        return [self._parse_schedule(row) for row in rows]
+
+    def bind_scheduled_run(
+        self,
+        record: ReconScoutScheduledRunRecord,
+    ) -> ReconScoutScheduledRunRecord:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM intelligence_recon_scheduled_runs WHERE run_id = ?",
+                (str(record.run_id),),
+            ).fetchone()
+            if row is not None:
+                existing = self._parse_scheduled_run(row)
+                if existing != record:
+                    raise ReconScoutDispatchConflict(
+                        "The scheduled run is already bound to a different scheduler event."
+                    )
+                return existing
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO intelligence_recon_scheduled_runs(
+                        run_id, event_id, schedule_id, owner_id, payload_digest, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(record.run_id),
+                        str(record.event_id),
+                        str(record.schedule_id),
+                        record.owner_id,
+                        record.payload_digest,
+                        record.created_at.astimezone(UTC).isoformat(),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ReconScoutDispatchConflict(
+                    "The scheduler event is already bound to another durable run."
+                ) from exc
+        return record
+
+    def get_scheduled_run(self, run_id: UUID) -> ReconScoutScheduledRunRecord | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM intelligence_recon_scheduled_runs WHERE run_id = ?",
+                (str(run_id),),
+            ).fetchone()
+        return self._parse_scheduled_run(row) if row is not None else None
 
 
 def _digest(value: object) -> str:
@@ -312,6 +465,25 @@ def _payload(request: ReconScoutCreate, agent_id: UUID) -> dict[str, object]:
         "freshness": request.freshness,
         "mode": "recon_scout",
     }
+
+
+def _schedule_payload(owner_id: str, request: ReconScoutScheduleCreate) -> dict[str, object]:
+    return {
+        "owner_id": owner_id,
+        "business_id": str(request.business_id),
+        "task": request.task,
+        "query": request.query,
+        "seed_urls": request.seed_urls,
+        "requested_agent_id": (
+            str(request.requested_agent_id) if request.requested_agent_id is not None else None
+        ),
+        "max_results": request.max_results,
+        "freshness": request.freshness,
+    }
+
+
+def _event_base_payload(payload: dict[str, object]) -> dict[str, object]:
+    return {key: value for key, value in payload.items() if key != "schedule_id"}
 
 
 def _evidence_prompt(task: str, evidence: ReconEvidenceBundle) -> str:
@@ -461,34 +633,32 @@ class ReconScoutService:
             Schedule(
                 name=request.name,
                 event_type=RECON_SCOUT_SCHEDULE_ACTION,
-                payload={
-                    "owner_id": owner_id,
-                    "business_id": str(request.business_id),
-                    "task": request.task,
-                    "query": request.query,
-                    "seed_urls": request.seed_urls,
-                    "requested_agent_id": (
-                        str(request.requested_agent_id)
-                        if request.requested_agent_id is not None
-                        else None
-                    ),
-                    "max_results": request.max_results,
-                    "freshness": request.freshness,
-                },
+                payload=_schedule_payload(owner_id, request),
                 cadence=ScheduleCadence.DAILY,
                 timezone=request.timezone,
                 daily_time=request.daily_time,
             )
         )
+        self.dispatch_store.bind_schedule(
+            ReconScoutScheduleRecord(
+                schedule_id=schedule.id,
+                owner_id=owner_id,
+                payload_digest=_digest(schedule.payload),
+                created_at=schedule.created_at,
+            )
+        )
         return self._schedule_view(schedule)
 
     def list_schedules(self, *, owner_id: str) -> list[ReconScoutScheduleView]:
-        return [
-            self._schedule_view(schedule)
-            for schedule in self.event_store.list_schedules(include_inactive=True)
-            if schedule.event_type == RECON_SCOUT_SCHEDULE_ACTION
-            and schedule.payload.get("owner_id") == owner_id
-        ]
+        views: list[ReconScoutScheduleView] = []
+        for registration in self.dispatch_store.list_schedules(owner_id=owner_id):
+            schedule = self.event_store.get_schedule(registration.schedule_id)
+            if schedule is None or schedule.event_type != RECON_SCOUT_SCHEDULE_ACTION:
+                continue
+            if _digest(schedule.payload) != registration.payload_digest:
+                continue
+            views.append(self._schedule_view(schedule))
+        return views
 
     def set_schedule_status(
         self,
@@ -497,13 +667,16 @@ class ReconScoutService:
         schedule_id: UUID,
         active: bool,
     ) -> ReconScoutScheduleView:
-        schedule = self.event_store.get_schedule(schedule_id)
-        if (
-            schedule is None
-            or schedule.event_type != RECON_SCOUT_SCHEDULE_ACTION
-            or schedule.payload.get("owner_id") != owner_id
-        ):
+        registration = self.dispatch_store.get_schedule(schedule_id)
+        if registration is None or registration.owner_id != owner_id:
             raise KeyError("RECON scout schedule not found for this owner.")
+        schedule = self.event_store.get_schedule(schedule_id)
+        if schedule is None or schedule.event_type != RECON_SCOUT_SCHEDULE_ACTION:
+            raise KeyError("RECON scout schedule not found for this owner.")
+        if _digest(schedule.payload) != registration.payload_digest:
+            raise ReconScoutDispatchConflict(
+                "The stored schedule payload changed outside the governed RECON schedule API."
+            )
         if active:
             schedule.status = ScheduleStatus.ACTIVE
             schedule.next_run_at = None
@@ -535,6 +708,39 @@ class ReconScoutService:
             freshness=payload.get("freshness"),
         )
 
+    def authorize_scheduled_run(self, event: Event, run: RunRecord) -> None:
+        """Bind a scheduler-created wrapper run to a private RECON schedule registration."""
+
+        if event.event_type != RECON_SCOUT_SCHEDULE_ACTION:
+            return
+        if event.source != "schedule":
+            raise ReconScoutDispatchConflict("RECON scheduled runs must originate from Scheduler.")
+        raw_schedule_id = event.payload.get("schedule_id")
+        try:
+            schedule_id = UUID(str(raw_schedule_id))
+        except (TypeError, ValueError) as exc:
+            raise ReconScoutDispatchConflict("Scheduled RECON event has no valid schedule ID.") from exc
+        registration = self.dispatch_store.get_schedule(schedule_id)
+        if registration is None:
+            raise ReconScoutDispatchConflict(
+                "The schedule was not created through CHIEF's governed RECON schedule API."
+            )
+        event_base = _event_base_payload(dict(event.payload))
+        if registration.owner_id != event_base.get("owner_id"):
+            raise ReconScoutDispatchConflict("Scheduled RECON event owner does not match registration.")
+        if _digest(event_base) != registration.payload_digest:
+            raise ReconScoutDispatchConflict("Scheduled RECON event payload changed after registration.")
+        self.dispatch_store.bind_scheduled_run(
+            ReconScoutScheduledRunRecord(
+                run_id=run.id,
+                event_id=event.id,
+                schedule_id=schedule_id,
+                owner_id=registration.owner_id,
+                payload_digest=_digest(event.payload),
+                created_at=run.created_at,
+            )
+        )
+
     def register_handlers(self, run_engine: RunEngine) -> None:
         if RECON_SCOUT_ACTION not in run_engine.handlers:
             run_engine.register_handler(RECON_SCOUT_ACTION, self.handle_scout)
@@ -549,6 +755,17 @@ class ReconScoutService:
         context: ActionContext,
         payload: dict[str, object],
     ) -> ActionResult:
+        receipt = self.dispatch_store.get_scheduled_run(context.lease.run.id)
+        if receipt is None:
+            raise PermanentActionError(
+                "No server-owned scheduler receipt exists for this RECON dispatch.",
+                code="recon_schedule_receipt_missing",
+            )
+        if _digest(payload) != receipt.payload_digest:
+            raise PermanentActionError(
+                "Scheduled RECON payload does not match its scheduler receipt.",
+                code="recon_schedule_payload_mismatch",
+            )
         try:
             request = ReconScoutCreate(
                 business_id=payload.get("business_id"),
@@ -558,12 +775,12 @@ class ReconScoutService:
                 requested_agent_id=payload.get("requested_agent_id"),
                 max_results=payload.get("max_results", 5),
                 freshness=payload.get("freshness"),
-                idempotency_key=f"scheduled:{context.lease.run.id}",
+                idempotency_key=f"scheduled:{receipt.event_id}",
             )
             owner_id = payload.get("owner_id")
-            if not isinstance(owner_id, str) or not owner_id:
-                raise ValueError("Scheduled RECON event is missing its owner.")
-            dispatch = self.enqueue(owner_id=owner_id, request=request)
+            if owner_id != receipt.owner_id:
+                raise ValueError("Scheduled RECON event owner changed after authorization.")
+            dispatch = self.enqueue(owner_id=receipt.owner_id, request=request)
         except (ReconScoutError, SearchUnavailable, ValueError) as exc:
             raise PermanentActionError(str(exc), code="recon_schedule_dispatch_refused") from exc
         return ActionResult(
