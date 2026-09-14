@@ -14,6 +14,7 @@ from chief.events.scheduler import Scheduler
 from chief.events.store import EventStore
 from chief.foresight.scoring import rank_signals
 from chief.foresight.store import ForesightStore
+from chief.intelligence.runtime import configure_runtime_intelligence
 from chief.notifications.factory import build_notification_dispatcher
 from chief.notifications.pump import NotificationPump
 from chief.notifications.store import NotificationStore
@@ -317,6 +318,12 @@ def build_runtime_supervisor(
             "briefing.generate": briefing_handler,
             "foresight.snapshot": foresight_handler,
         },
+    )
+    configure_runtime_intelligence(
+        database_path=database_path,
+        run_store=run_store,
+        run_engine=run_engine,
+        event_store=event_store,
     )
     return RuntimeSupervisor(
         event_store=event_store,
