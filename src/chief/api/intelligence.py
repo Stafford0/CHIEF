@@ -6,6 +6,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 
+from chief.intelligence.execution import (
+    SpecialistDispatchConflict,
+    SpecialistRunError,
+    SpecialistRunRoutingError,
+    SpecialistRunService,
+)
 from chief.intelligence.factory import (
     AgentFactory,
     AgentFactoryError,
@@ -21,6 +27,8 @@ from chief.intelligence.schema import (
     AgentRouteDecision,
     AgentRoutingRequest,
     NeuromapSnapshot,
+    SpecialistRunCreate,
+    SpecialistRunDispatch,
 )
 
 
@@ -41,11 +49,20 @@ def _factory_error(exc: Exception) -> NoReturn:
     raise exc
 
 
+def _specialist_run_error(exc: Exception) -> NoReturn:
+    if isinstance(exc, (SpecialistRunRoutingError, SpecialistDispatchConflict)):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if isinstance(exc, (SpecialistRunError, ValueError)):
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    raise exc
+
+
 def create_intelligence_router(
     *,
     neuromap_service: NeuromapService,
     orchestrator: SpecialistOrchestrator,
     agent_factory: AgentFactory,
+    specialist_runs: SpecialistRunService | None = None,
     record_change: Callable[[Request, str, str, str], None] | None = None,
 ) -> APIRouter:
     """Expose self-knowledge and governed specialist orchestration."""
@@ -63,6 +80,20 @@ def create_intelligence_router(
     @router.post("/route", response_model=AgentRouteDecision)
     def route_work(payload: AgentRoutingRequest, request: Request) -> AgentRouteDecision:
         return orchestrator.route(owner_id=_actor(request), request=payload)
+
+    if specialist_runs is not None:
+
+        @router.post("/specialist-runs", response_model=SpecialistRunDispatch, status_code=201)
+        def create_specialist_run(
+            payload: SpecialistRunCreate,
+            request: Request,
+        ) -> SpecialistRunDispatch:
+            try:
+                dispatch = specialist_runs.enqueue(owner_id=_actor(request), request=payload)
+            except (SpecialistRunError, ValueError) as exc:
+                _specialist_run_error(exc)
+            changed(request, "specialist_run_queued", dispatch.run_id)
+            return dispatch
 
     @router.get("/agent-proposals", response_model=list[AgentProposal])
     def list_agent_proposals(
