@@ -6,6 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 
+from chief.intelligence.evidence import SearchUnavailable
 from chief.intelligence.execution import (
     SpecialistDispatchConflict,
     SpecialistRunError,
@@ -29,6 +30,16 @@ from chief.intelligence.schema import (
     NeuromapSnapshot,
     SpecialistRunCreate,
     SpecialistRunDispatch,
+)
+from chief.intelligence.scout import (
+    ReconScoutCreate,
+    ReconScoutDispatch,
+    ReconScoutDispatchConflict,
+    ReconScoutError,
+    ReconScoutRoutingError,
+    ReconScoutScheduleCreate,
+    ReconScoutScheduleView,
+    ReconScoutService,
 )
 
 
@@ -57,12 +68,26 @@ def _specialist_run_error(exc: Exception) -> NoReturn:
     raise exc
 
 
+def _scout_error(exc: Exception) -> NoReturn:
+    if isinstance(exc, KeyError):
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if isinstance(
+        exc,
+        (ReconScoutRoutingError, ReconScoutDispatchConflict, SearchUnavailable),
+    ):
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if isinstance(exc, (ReconScoutError, ValueError)):
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    raise exc
+
+
 def create_intelligence_router(
     *,
     neuromap_service: NeuromapService,
     orchestrator: SpecialistOrchestrator,
     agent_factory: AgentFactory,
     specialist_runs: SpecialistRunService | None = None,
+    recon_scouts: ReconScoutService | None = None,
     record_change: Callable[[Request, str, str, str], None] | None = None,
 ) -> APIRouter:
     """Expose self-knowledge and governed specialist orchestration."""
@@ -94,6 +119,81 @@ def create_intelligence_router(
                 _specialist_run_error(exc)
             changed(request, "specialist_run_queued", dispatch.run_id)
             return dispatch
+
+    if recon_scouts is not None:
+
+        @router.post("/recon/scouts", response_model=ReconScoutDispatch, status_code=201)
+        def create_recon_scout(
+            payload: ReconScoutCreate,
+            request: Request,
+        ) -> ReconScoutDispatch:
+            try:
+                dispatch = recon_scouts.enqueue(owner_id=_actor(request), request=payload)
+            except (ReconScoutError, SearchUnavailable, ValueError) as exc:
+                _scout_error(exc)
+            changed(request, "recon_scout_queued", dispatch.run_id)
+            return dispatch
+
+        @router.get("/recon/scout-schedules", response_model=list[ReconScoutScheduleView])
+        def list_recon_scout_schedules(request: Request) -> list[ReconScoutScheduleView]:
+            return recon_scouts.list_schedules(owner_id=_actor(request))
+
+        @router.post(
+            "/recon/scout-schedules",
+            response_model=ReconScoutScheduleView,
+            status_code=201,
+        )
+        def create_recon_scout_schedule(
+            payload: ReconScoutScheduleCreate,
+            request: Request,
+        ) -> ReconScoutScheduleView:
+            try:
+                schedule = recon_scouts.create_schedule(
+                    owner_id=_actor(request),
+                    request=payload,
+                )
+            except (ReconScoutError, SearchUnavailable, ValueError) as exc:
+                _scout_error(exc)
+            changed(request, "recon_scout_schedule_created", schedule.id)
+            return schedule
+
+        @router.post(
+            "/recon/scout-schedules/{schedule_id}/pause",
+            response_model=ReconScoutScheduleView,
+        )
+        def pause_recon_scout_schedule(
+            schedule_id: UUID,
+            request: Request,
+        ) -> ReconScoutScheduleView:
+            try:
+                schedule = recon_scouts.set_schedule_status(
+                    owner_id=_actor(request),
+                    schedule_id=schedule_id,
+                    active=False,
+                )
+            except (KeyError, ReconScoutError, ValueError) as exc:
+                _scout_error(exc)
+            changed(request, "recon_scout_schedule_paused", schedule.id)
+            return schedule
+
+        @router.post(
+            "/recon/scout-schedules/{schedule_id}/resume",
+            response_model=ReconScoutScheduleView,
+        )
+        def resume_recon_scout_schedule(
+            schedule_id: UUID,
+            request: Request,
+        ) -> ReconScoutScheduleView:
+            try:
+                schedule = recon_scouts.set_schedule_status(
+                    owner_id=_actor(request),
+                    schedule_id=schedule_id,
+                    active=True,
+                )
+            except (KeyError, ReconScoutError, ValueError) as exc:
+                _scout_error(exc)
+            changed(request, "recon_scout_schedule_resumed", schedule.id)
+            return schedule
 
     @router.get("/agent-proposals", response_model=list[AgentProposal])
     def list_agent_proposals(
