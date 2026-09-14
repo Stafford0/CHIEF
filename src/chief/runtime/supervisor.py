@@ -4,6 +4,7 @@ import logging
 import shutil
 import sqlite3
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any
 
 from chief.core.execution_control import ExecutionControlStore
 from chief.events.scheduler import Scheduler
+from chief.events.schema import Event
 from chief.events.store import EventStore
 from chief.foresight.scoring import rank_signals
 from chief.foresight.store import ForesightStore
@@ -18,11 +20,19 @@ from chief.intelligence.runtime import configure_runtime_intelligence
 from chief.notifications.factory import build_notification_dispatcher
 from chief.notifications.pump import NotificationPump
 from chief.notifications.store import NotificationStore
-from chief.runs import ActionResult, RunEngine, SQLiteRunStore, StepSpec, VerificationStatus
+from chief.runs import (
+    ActionResult,
+    RunEngine,
+    RunRecord,
+    SQLiteRunStore,
+    StepSpec,
+    VerificationStatus,
+)
 from chief.work.briefing import build_briefing
 from chief.work.store import WorkStore
 
 logger = logging.getLogger("chief.runtime.supervisor")
+EventRunAuthorizer = Callable[[Event, RunRecord], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +114,7 @@ class RuntimeSupervisor:
         state_store: RuntimeStateStore | None = None,
         execution_control: ExecutionControlStore | None = None,
         notification_pump: NotificationPump | None = None,
+        event_run_authorizer: EventRunAuthorizer | None = None,
         configured_execution_enabled: bool = True,
         worker_id: str = "chief-runtime",
         min_free_disk_bytes: int = 512 * 1024 * 1024,
@@ -130,6 +141,7 @@ class RuntimeSupervisor:
         self.state_store = state_store or RuntimeStateStore(event_store.database_path)
         self.execution_control = execution_control or ExecutionControlStore(event_store.database_path)
         self.notification_pump = notification_pump
+        self.event_run_authorizer = event_run_authorizer
         self.configured_execution_enabled = bool(configured_execution_enabled)
         self.worker_id = worker_id
         self.min_free_disk_bytes = min_free_disk_bytes
@@ -168,7 +180,7 @@ class RuntimeSupervisor:
             queued += 1
         return queued
 
-    def _dispatch_event(self, event) -> bool:
+    def _dispatch_event(self, event: Event) -> bool:
         if event.event_type not in self.run_engine.handlers:
             self.event_store.complete_event(
                 event.id,
@@ -177,7 +189,7 @@ class RuntimeSupervisor:
                 error=f"No durable run handler is registered for event type '{event.event_type}'.",
             )
             return False
-        self.run_store.create_run(
+        run = self.run_store.create_run(
             idempotency_key=f"event:{event.idempotency_key}",
             correlation_id=event.correlation_id or str(event.id),
             input_data={"event_id": str(event.id), "source": event.source, **event.payload},
@@ -190,6 +202,17 @@ class RuntimeSupervisor:
                 )
             ],
         )
+        if self.event_run_authorizer is not None:
+            try:
+                self.event_run_authorizer(event, run)
+            except (PermissionError, RuntimeError, ValueError) as exc:
+                self.event_store.complete_event(
+                    event.id,
+                    self.worker_id,
+                    success=False,
+                    error=f"Event run authorization refused: {exc}",
+                )
+                return False
         self.event_store.complete_event(event.id, self.worker_id, success=True)
         return True
 
@@ -319,7 +342,7 @@ def build_runtime_supervisor(
             "foresight.snapshot": foresight_handler,
         },
     )
-    configure_runtime_intelligence(
+    intelligence = configure_runtime_intelligence(
         database_path=database_path,
         run_store=run_store,
         run_engine=run_engine,
@@ -333,6 +356,7 @@ def build_runtime_supervisor(
         state_store=RuntimeStateStore(database_path),
         execution_control=ExecutionControlStore(database_path),
         notification_pump=NotificationPump(notification_store, notification_dispatcher),
+        event_run_authorizer=intelligence.recon_scouts.authorize_scheduled_run,
         configured_execution_enabled=configured_execution_enabled,
         worker_id=worker_id,
         min_free_disk_bytes=min_free_disk_bytes,
