@@ -8,7 +8,12 @@ from chief.core.execution_control import ExecutionControlStore
 from chief.events.scheduler import Scheduler
 from chief.events.schema import Schedule, ScheduleCadence
 from chief.events.store import EventStore
-from chief.intelligence.evidence import EvidencePage, ReconEvidenceBundle, SearchUnavailable
+from chief.intelligence.evidence import (
+    BraveSearchProvider,
+    EvidencePage,
+    ReconEvidenceBundle,
+    SearchUnavailable,
+)
 from chief.intelligence.orchestrator import SpecialistOrchestrator
 from chief.intelligence.scout import (
     RECON_SCOUT_ACTION,
@@ -167,6 +172,14 @@ def _service(tmp_path, *, evidence=None):
     )
     service.register_handlers(run_engine)
     return path, portfolio, business, recon, run_store, run_engine, event_store, service
+
+
+def test_brave_search_fails_before_network_without_secret() -> None:
+    provider = BraveSearchProvider(lambda: None)
+
+    assert provider.available() is False
+    with pytest.raises(SearchUnavailable, match="CHIEF_BRAVE_SEARCH_API_KEY"):
+        provider.search("current market intelligence", count=5, freshness="pd")
 
 
 def test_recon_scout_executes_read_only_evidence_through_durable_run(tmp_path) -> None:
