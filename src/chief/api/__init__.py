@@ -36,8 +36,8 @@ from chief.integrations.stripe import StripeReadOnlyConnector
 from chief.intelligence import (
     AgentFactory,
     NeuromapService,
-    SQLiteAgentProposalStore,
     SpecialistOrchestrator,
+    SQLiteAgentProposalStore,
 )
 from chief.models.ollama import OllamaProvider
 from chief.models.router import ModelRouter
