@@ -206,6 +206,10 @@ For web discovery, store a Brave Search API credential under:
 
 `CHIEF_BRAVE_SEARCH_API_KEY`
 
+The Brave adapter uses the official Web Search API endpoint and sends the credential only in the
+provider's subscription-token request header. The adapter bounds result count, response size,
+request duration, and accepted freshness shortcuts before evidence enters CHIEF.
+
 Use CHIEF's existing encrypted `/secrets/{name}` API on Windows so the plaintext value is not
 returned by later reads. Environment-variable resolution remains a migration fallback, not the
 preferred long-term storage path.
