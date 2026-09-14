@@ -2,7 +2,8 @@
 
 The Intelligence Layer adds self-knowledge and governed specialist orchestration without
 creating a second execution system. It is deliberately layered on top of CHIEF's existing
-portfolio registry, model router, durable run engine, audit path, and human-authority model.
+portfolio registry, model router, durable run engine, scheduler, audit path, and human-authority
+model.
 
 ## Implemented in v1
 
@@ -48,9 +49,9 @@ scoring ordinary mission/name text. This remains deterministic and inspectable.
 
 `POST /intelligence/specialist-runs`
 
-A routed specialist can now perform an analysis-only job through CHIEF's existing durable run
-engine. The run receives normal idempotency, leases, retries, cancellation, verification, and
-checkpoint semantics.
+A routed specialist can perform an analysis-only job through CHIEF's existing durable run engine.
+The run receives normal idempotency, leases, retries, cancellation, verification, and checkpoint
+semantics.
 
 Specialist dispatch is protected by a server-owned authorization receipt stored separately from
 the caller-controlled run payload. Merely submitting the action name through the generic `/runs`
@@ -58,21 +59,72 @@ API is insufficient. The worker refuses specialist execution unless a matching C
 receipt exists.
 
 At execution time CHIEF revalidates the specialist instead of trusting routing-time state. The
-worker requires:
+worker requires the same owner, agent, task, lifecycle, mission, authority, and budget digest.
+Any meaningful change invalidates the dispatch and forces fresh routing.
 
-- the same owner and agent identity;
-- the same task digest;
-- an exact digest match for the routed name, mission, lifecycle state, authority, and budget;
-- the agent to remain active, execution-enabled, kill-switch-open, funded, and inside its
-  authority window; and
-- an exact analysis-only payload.
+The general v1 specialist handler remains **analysis-only**. It routes only to a local, zero-cost
+model and does not execute browser, shell, filesystem, or connector tools.
 
-Any authority, budget, lifecycle, identity, or mission change invalidates the dispatch and forces
-fresh routing. This closes the route-now / revoke-later race.
+### RECON read-only evidence
 
-The v1 handler is deliberately **analysis-only**. It routes only to a local, zero-cost model and
-has no browser, shell, connector writes, or private-memory access. RECON, FORGE, and OPS receive
-specialized analysis instructions, but none may claim that an external action occurred.
+RECON now has one explicitly registered tool: `recon.evidence`.
+
+The capability is read-only and bounded. It can:
+
+- inspect explicitly supplied public HTTP/HTTPS seed URLs without a search credential;
+- optionally discover public pages through Brave Web Search when
+  `CHIEF_BRAVE_SEARCH_API_KEY` exists in CHIEF's encrypted secret vault;
+- collect bounded HTML text and source metadata;
+- tolerate individual page failures without discarding the whole evidence bundle; and
+- pass evidence to the local RECON model with source identifiers such as `[S1]`.
+
+It reuses CHIEF's browser URL policy, which rejects localhost, private/local network addresses,
+credential-bearing URLs, unsafe schemes, and redirects into protected address space. The
+lightweight Scout reader disables active page execution by parsing fetched HTML rather than
+running arbitrary page JavaScript.
+
+External page text is always marked as untrusted evidence. RECON's system prompt explicitly
+forbids following instructions contained in source material. Sources are data, not authority.
+
+Brave search is optional. If a Scout requires discovery and the search credential is absent, the
+request fails closed instead of pretending search occurred. A Scout with explicit seed URLs can
+still run without that credential.
+
+### Proactive RECON Scout jobs
+
+One-off Scout:
+
+`POST /intelligence/recon/scouts`
+
+Recurring Scout schedules:
+
+- `GET /intelligence/recon/scout-schedules`
+- `POST /intelligence/recon/scout-schedules`
+- `POST /intelligence/recon/scout-schedules/{id}/pause`
+- `POST /intelligence/recon/scout-schedules/{id}/resume`
+
+The default recurring schedule is 02:30 in `America/Chicago`, but callers can select another
+valid IANA timezone and local time.
+
+Recurring Scouts use CHIEF's existing Scheduler, EventStore, RunStore, RunEngine, execution kill
+switch, and background runtime. The background worker now registers the same intelligence
+handlers as the API process, so scheduled work can execute while the interactive UI is closed.
+
+Scheduled Scout dispatch uses two private authorization records:
+
+1. A private schedule registration proves the schedule was created through the governed RECON
+   schedule API with a specific owner and immutable workload digest.
+2. A private scheduled-run receipt proves the background scheduler created that exact durable run
+   from that exact registered schedule event.
+
+Generic `/schedules` callers therefore cannot gain RECON authority merely by copying the Scout
+event name, and generic `/runs` callers cannot manufacture a valid scheduled Scout wrapper. The
+worker revalidates the specialist again when the actual Scout run executes.
+
+A Scout currently performs exactly one external capability: `recon.evidence`. It then uses a
+local, zero-cost model to produce an evidence-backed result containing an executive finding,
+evidence, risks/unknowns, and a recommended next action. It does not write to websites, run shell
+commands, modify files, send messages, or make financial actions.
 
 ### Proposal-only Agent Factory
 
@@ -96,33 +148,34 @@ preventing duplicate agent creation after an interrupted approval request.
 ```text
 Authenticated CHIEF API
         |
-        +-- /intelligence/neuromap
-        |         +-- ToolRegistry
-        |         +-- ModelRouter
-        |         +-- PortfolioStore
+        +-- Neuromap
+        |     +-- ToolRegistry
+        |     +-- ModelRouter
+        |     +-- PortfolioStore
         |
-        +-- /intelligence/route
-        |         +-- ManagedAgent
-        |         +-- AuthorityPolicy
-        |         +-- BudgetEnvelope
+        +-- Specialist route / analysis
+        |     +-- deterministic route
+        |     +-- private dispatch receipt
+        |     +-- RunStore / RunEngine
+        |     +-- execution-time authority digest check
         |
-        +-- /intelligence/specialist-runs
-        |         +-- deterministic route
-        |         +-- server-owned dispatch receipt
-        |         +-- durable RunStore / RunEngine
-        |         +-- execution-time authority digest check
-        |         +-- local-model analysis handler
+        +-- RECON evidence / Scout
+        |     +-- recon.evidence
+        |     |     +-- SSRF-safe public URL policy
+        |     |     +-- optional Brave discovery
+        |     |     +-- bounded HTML evidence
+        |     |
+        |     +-- one-off Scout run
+        |     +-- governed recurring schedule
+        |           +-- private schedule registration
+        |           +-- Scheduler / EventStore
+        |           +-- private scheduler-run receipt
+        |           +-- background RunEngine
         |
-        +-- /intelligence/agent-proposals
-                  +-- durable proposal ledger
-                  +-- ToolRegistry validation
-                  +-- Portfolio boundary validation
-                  +-- explicit approval
-                          +-- inert ManagedAgent
-                              execution = false
-                              kill switch = engaged
-                              authority = disabled
-                              budget = zero
+        +-- Agent Factory
+              +-- proposal ledger
+              +-- explicit approval
+              +-- inert ManagedAgent
 ```
 
 ## Safety invariants
@@ -132,8 +185,11 @@ The v1 layer must not violate these rules:
 - Self-knowledge reports capability; it never grants capability.
 - Routing selects among existing authority; it never creates authority.
 - A routed run cannot execute without a server-owned dispatch receipt.
+- Scheduled Scout names are not authorization; private schedule and scheduler-run receipts are.
 - Authority is revalidated at execution time, not just routing time.
-- Specialist analysis uses local models only and executes zero tools.
+- RECON evidence is read-only and treats external content as untrusted data.
+- Search discovery fails closed when its credential is unavailable.
+- Specialist and Scout model synthesis is local-only and zero-cost-tier in unattended execution.
 - Agent creation and agent activation are separate operations.
 - Factory approval cannot enable execution, external writes, delegation, or financial actions.
 - Unknown requested tools are rejected before a proposal is stored.
@@ -142,26 +198,40 @@ The v1 layer must not violate these rules:
 - Ambiguous routing fails closed.
 - Existing CHIEF run verification and global kill-switch paths remain authoritative.
 
+## Required configuration for full RECON discovery
+
+Seed-URL Scout runs require no search API key.
+
+For web discovery, store a Brave Search API credential under:
+
+`CHIEF_BRAVE_SEARCH_API_KEY`
+
+Use CHIEF's existing encrypted `/secrets/{name}` API on Windows so the plaintext value is not
+returned by later reads. Environment-variable resolution remains a migration fallback, not the
+preferred long-term storage path.
+
 ## What v1 deliberately does not do
 
-The Intelligence Layer does not yet:
+The Intelligence Layer still does not:
 
-- let specialists execute browser, filesystem, shell, or connector tools;
+- give RECON interactive browser control or page-write authority;
+- let FORGE modify repositories or execute shell commands as a specialist;
+- let OPS mutate external systems;
 - automatically grant specialist authority;
-- run persistent proactive Scout/RECON jobs;
 - provide a streaming voice backend;
 - provide cloud-to-local task relay;
 - dynamically install code or tools generated by an agent; or
 - let agents create other agents without an explicit human proposal approval path.
 
-Those capabilities should be added vertically, with corresponding evaluation and recovery gates,
-rather than by weakening the existing control plane.
+Those capabilities should be added vertically with their own permission, evaluation, recovery,
+and adversarial gates rather than by broadening the current read-only Scout path.
 
 ## Next build order
 
-1. Add eval suites for specialist routing quality, prompt isolation, and action-boundary attacks.
-2. Add a read-only evidence tool path for RECON, with source receipts and strict tool scoping.
-3. Add scheduled RECON/Scout jobs using existing events, runs, notifications, and foresight.
-4. Add read-only engineering inspection for FORGE before any code-write authority.
+1. Add RECON result promotion into Foresight/notifications with deduplication and significance
+   thresholds.
+2. Add read-only repository and codebase inspection for FORGE before any write authority.
+3. Add read-only operational evidence feeds for OPS.
+4. Expand specialist isolation and prompt-injection evaluations using hostile evidence fixtures.
 5. Upgrade voice to a provider-neutral streaming STT/VAD/TTS pipeline.
 6. Add a credential-free cloud/local task envelope after local specialist execution is mature.
