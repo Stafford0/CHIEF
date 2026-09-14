@@ -24,6 +24,8 @@ from chief.browser.research import BrowserResearchService, PlaywrightReadOnlyDri
 from chief.core.config import Settings
 from chief.core.execution_control import ExecutionControlStore
 from chief.core.sqlite_session_store import SQLiteSessionStore
+from chief.events.scheduler import Scheduler
+from chief.events.store import EventStore
 from chief.integrations.evidence_plane import BusinessEvidencePlane
 from chief.integrations.github import GitHubReadOnlyConnector
 from chief.integrations.gmail import GmailReadOnlyConnector
@@ -41,6 +43,8 @@ from chief.intelligence import (
     SQLiteAgentProposalStore,
     SQLiteSpecialistDispatchStore,
 )
+from chief.intelligence.evidence import build_recon_evidence_service
+from chief.intelligence.scout import ReconScoutService, SQLiteReconScoutDispatchStore
 from chief.models.ollama import OllamaProvider
 from chief.models.route_audit import SQLiteModelRouteStore
 from chief.models.router import ModelRouter
@@ -49,6 +53,7 @@ from chief.portfolio.store import SQLitePortfolioStore
 from chief.runs import RunEngine, SQLiteRunStore
 from chief.security.secrets import EncryptedSecretStore, SecretResolver
 from chief.tools.connector_write import ConnectorWriteTool
+from chief.tools.recon_evidence import ReconEvidenceTool
 from chief.tools.registry import create_standard_registry
 
 
@@ -276,6 +281,12 @@ def create_operating_router(*args: Any, **kwargs: Any):
     router.include_router(create_voice_router(coordinator_factory=voice_coordinator_factory))
     router.include_router(create_cofounder_router(database_path=database_path))
 
+    recon_evidence = build_recon_evidence_service(
+        lambda: secret_resolver.get("CHIEF_BRAVE_SEARCH_API_KEY")
+    )
+    if tool_registry.get("recon.evidence") is None:
+        tool_registry.register(ReconEvidenceTool(recon_evidence))
+
     portfolio_store = SQLitePortfolioStore(database_path)
     proposal_store = SQLiteAgentProposalStore(database_path)
     agent_factory = AgentFactory(
@@ -286,15 +297,29 @@ def create_operating_router(*args: Any, **kwargs: Any):
     orchestrator = SpecialistOrchestrator(portfolio_store)
     model_router = _core_model_router(settings)
     run_store, run_engine = _core_run_plane(database_path)
+    route_store = SQLiteModelRouteStore(database_path)
     specialist_runs = SpecialistRunService(
         portfolio_store=portfolio_store,
         orchestrator=orchestrator,
         run_store=run_store,
         model_router=model_router,
         dispatch_store=SQLiteSpecialistDispatchStore(database_path),
-        route_store=SQLiteModelRouteStore(database_path),
+        route_store=route_store,
     )
     specialist_runs.register_handler(run_engine)
+    event_store = EventStore(database_path)
+    recon_scouts = ReconScoutService(
+        portfolio_store=portfolio_store,
+        orchestrator=orchestrator,
+        run_store=run_store,
+        model_router=model_router,
+        evidence_service=recon_evidence,
+        dispatch_store=SQLiteReconScoutDispatchStore(database_path),
+        event_store=event_store,
+        scheduler=Scheduler(event_store),
+        route_store=route_store,
+    )
+    recon_scouts.register_handlers(run_engine)
     router.include_router(
         create_intelligence_router(
             neuromap_service=NeuromapService(
@@ -308,6 +333,7 @@ def create_operating_router(*args: Any, **kwargs: Any):
             orchestrator=orchestrator,
             agent_factory=agent_factory,
             specialist_runs=specialist_runs,
+            recon_scouts=recon_scouts,
             record_change=kwargs.get("record_change"),
         )
     )
