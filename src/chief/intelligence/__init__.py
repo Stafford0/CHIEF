@@ -1,5 +1,12 @@
-"""CHIEF self-knowledge, specialist routing, and governed agent creation."""
+"""CHIEF self-knowledge, specialist routing, evidence, and governed agents."""
 
+from chief.intelligence.evidence import (
+    BraveSearchProvider,
+    ReconEvidenceBundle,
+    ReconEvidenceService,
+    SearchUnavailable,
+    build_recon_evidence_service,
+)
 from chief.intelligence.execution import (
     SPECIALIST_ANALYSIS_ACTION,
     SpecialistDispatchConflict,
@@ -28,8 +35,25 @@ from chief.intelligence.schema import (
     SpecialistRunCreate,
     SpecialistRunDispatch,
 )
+from chief.intelligence.scout import (
+    RECON_EVIDENCE_TOOL,
+    RECON_SCOUT_ACTION,
+    RECON_SCOUT_SCHEDULE_ACTION,
+    ReconScoutCreate,
+    ReconScoutDispatch,
+    ReconScoutDispatchConflict,
+    ReconScoutError,
+    ReconScoutRoutingError,
+    ReconScoutScheduleCreate,
+    ReconScoutScheduleView,
+    ReconScoutService,
+    SQLiteReconScoutDispatchStore,
+)
 
 __all__ = [
+    "RECON_EVIDENCE_TOOL",
+    "RECON_SCOUT_ACTION",
+    "RECON_SCOUT_SCHEDULE_ACTION",
     "SPECIALIST_ANALYSIS_ACTION",
     "AgentFactory",
     "AgentFactoryError",
@@ -40,11 +64,24 @@ __all__ = [
     "AgentProposalStatus",
     "AgentRouteDecision",
     "AgentRoutingRequest",
+    "BraveSearchProvider",
     "NeuromapService",
     "NeuromapSnapshot",
+    "ReconEvidenceBundle",
+    "ReconEvidenceService",
+    "ReconScoutCreate",
+    "ReconScoutDispatch",
+    "ReconScoutDispatchConflict",
+    "ReconScoutError",
+    "ReconScoutRoutingError",
+    "ReconScoutScheduleCreate",
+    "ReconScoutScheduleView",
+    "ReconScoutService",
     "RoutingStatus",
     "SQLiteAgentProposalStore",
+    "SQLiteReconScoutDispatchStore",
     "SQLiteSpecialistDispatchStore",
+    "SearchUnavailable",
     "SpecialistDispatchConflict",
     "SpecialistOrchestrator",
     "SpecialistRunCreate",
@@ -52,4 +89,5 @@ __all__ = [
     "SpecialistRunError",
     "SpecialistRunRoutingError",
     "SpecialistRunService",
+    "build_recon_evidence_service",
 ]
