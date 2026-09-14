@@ -1,5 +1,13 @@
 """CHIEF self-knowledge, specialist routing, and governed agent creation."""
 
+from chief.intelligence.execution import (
+    SPECIALIST_ANALYSIS_ACTION,
+    SQLiteSpecialistDispatchStore,
+    SpecialistDispatchConflict,
+    SpecialistRunError,
+    SpecialistRunRoutingError,
+    SpecialistRunService,
+)
 from chief.intelligence.factory import (
     AgentFactory,
     AgentFactoryError,
@@ -17,9 +25,12 @@ from chief.intelligence.schema import (
     AgentRoutingRequest,
     NeuromapSnapshot,
     RoutingStatus,
+    SpecialistRunCreate,
+    SpecialistRunDispatch,
 )
 
 __all__ = [
+    "SPECIALIST_ANALYSIS_ACTION",
     "AgentFactory",
     "AgentFactoryError",
     "AgentProposal",
@@ -33,5 +44,12 @@ __all__ = [
     "NeuromapSnapshot",
     "RoutingStatus",
     "SQLiteAgentProposalStore",
+    "SQLiteSpecialistDispatchStore",
+    "SpecialistDispatchConflict",
     "SpecialistOrchestrator",
+    "SpecialistRunCreate",
+    "SpecialistRunDispatch",
+    "SpecialistRunError",
+    "SpecialistRunRoutingError",
+    "SpecialistRunService",
 ]
