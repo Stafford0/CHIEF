@@ -12,8 +12,8 @@ from chief.intelligence import (
     AgentRoutingRequest,
     NeuromapService,
     RoutingStatus,
-    SQLiteAgentProposalStore,
     SpecialistOrchestrator,
+    SQLiteAgentProposalStore,
 )
 from chief.models.base import (
     ModelCapabilities,
