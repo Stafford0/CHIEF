@@ -2,11 +2,11 @@
 
 from chief.intelligence.execution import (
     SPECIALIST_ANALYSIS_ACTION,
-    SQLiteSpecialistDispatchStore,
     SpecialistDispatchConflict,
     SpecialistRunError,
     SpecialistRunRoutingError,
     SpecialistRunService,
+    SQLiteSpecialistDispatchStore,
 )
 from chief.intelligence.factory import (
     AgentFactory,
