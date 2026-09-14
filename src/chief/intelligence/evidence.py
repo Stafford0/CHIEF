@@ -50,6 +50,13 @@ class EvidencePage(BaseModel):
     trust: str = "untrusted_external"
 
 
+class EvidenceFailure(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    url: str
+    error: str = Field(max_length=2_000)
+
+
 class ReconEvidenceBundle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -58,6 +65,7 @@ class ReconEvidenceBundle(BaseModel):
     search_available: bool = False
     search_results: list[SearchResult] = Field(default_factory=list)
     pages: list[EvidencePage] = Field(default_factory=list)
+    failures: list[EvidenceFailure] = Field(default_factory=list)
 
 
 class SearchProvider(Protocol):
@@ -352,25 +360,30 @@ class ReconEvidenceService:
         urls = seeds + [result.url for result in results]
         deduped = list(dict.fromkeys(urls))[: self.max_pages]
         pages: list[EvidencePage] = []
-        if deduped:
-            raw_pages = self.browser_service.read_pages(deduped)
-            pages = [
+        failures: list[EvidenceFailure] = []
+        for url in deduped:
+            try:
+                page = self.browser_service.read_pages([url])[0]
+            except (PermissionError, RuntimeError, ValueError) as exc:
+                failures.append(EvidenceFailure(url=url, error=str(exc)))
+                continue
+            pages.append(
                 EvidencePage(
-                    source_id=f"S{index}",
+                    source_id=f"S{len(pages) + 1}",
                     url=page.final_url,
                     title=page.title,
                     text=page.text,
                     truncated=page.truncated,
                     trust=page.trust,
                 )
-                for index, page in enumerate(raw_pages, start=1)
-            ]
+            )
         return ReconEvidenceBundle(
             query=query,
             search_provider=self.search_provider_name if query else None,
             search_available=self.search_available,
             search_results=results,
             pages=pages,
+            failures=failures,
         )
 
 
