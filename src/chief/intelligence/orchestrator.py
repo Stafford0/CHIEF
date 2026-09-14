@@ -97,6 +97,22 @@ def _terms(value: str) -> set[str]:
     }
 
 
+def agent_is_execution_ready(agent: ManagedAgent, *, now: datetime) -> bool:
+    """Single fail-closed eligibility invariant shared by routing and durable execution."""
+
+    if agent.role not in {AgentRole.SPECIALIST, AgentRole.PORTFOLIO_OPERATIONS}:
+        return False
+    if agent.status is not LifecycleState.ACTIVE:
+        return False
+    if not agent.execution_enabled or agent.kill_switch_engaged:
+        return False
+    if not agent.authority.enabled:
+        return False
+    if agent.authority.expires_at is None or agent.authority.expires_at <= now:
+        return False
+    return agent.budget.max_parallel_runs >= 1 and agent.budget.monthly_token_limit >= 1
+
+
 class SpecialistOrchestrator:
     """Route work to already-authorized specialists without granting new authority.
 
@@ -107,20 +123,6 @@ class SpecialistOrchestrator:
 
     def __init__(self, portfolio_store: SQLitePortfolioStore) -> None:
         self.portfolio_store = portfolio_store
-
-    @staticmethod
-    def _is_execution_ready(agent: ManagedAgent, *, now: datetime) -> bool:
-        if agent.role not in {AgentRole.SPECIALIST, AgentRole.PORTFOLIO_OPERATIONS}:
-            return False
-        if agent.status is not LifecycleState.ACTIVE:
-            return False
-        if not agent.execution_enabled or agent.kill_switch_engaged:
-            return False
-        if not agent.authority.enabled:
-            return False
-        if agent.authority.expires_at is None or agent.authority.expires_at <= now:
-            return False
-        return agent.budget.max_parallel_runs >= 1 and agent.budget.monthly_token_limit >= 1
 
     @staticmethod
     def _matches_scope(agent: ManagedAgent, request: AgentRoutingRequest) -> bool:
@@ -186,7 +188,7 @@ class SpecialistOrchestrator:
                     status=RoutingStatus.REQUESTED_AGENT_UNAVAILABLE,
                     reason="The requested agent is outside the requested operating scope.",
                 )
-            if not self._is_execution_ready(requested, now=now):
+            if not agent_is_execution_ready(requested, now=now):
                 return AgentRouteDecision(
                     status=RoutingStatus.REQUESTED_AGENT_UNAVAILABLE,
                     reason=(
@@ -213,7 +215,7 @@ class SpecialistOrchestrator:
             agent
             for agent in agents
             if self._matches_scope(agent, request)
-            and self._is_execution_ready(agent, now=now)
+            and agent_is_execution_ready(agent, now=now)
             and self._has_required_tools(agent, required_tools)
         ]
         if not eligible:
