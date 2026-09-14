@@ -157,6 +157,33 @@ class AgentRouteDecision(BaseModel):
     candidates: list[RouteCandidate] = Field(default_factory=list)
 
 
+class SpecialistRunCreate(BaseModel):
+    """Queue one analysis-only specialist run through CHIEF's durable worker."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    idempotency_key: str = Field(min_length=1, max_length=180)
+    task: str = Field(min_length=1, max_length=10_000)
+    business_id: UUID | None = None
+    requested_agent_id: UUID | None = None
+
+    @field_validator("idempotency_key", "task")
+    @classmethod
+    def normalize_required_text(cls, value: str) -> str:
+        return _normalize_required(value)
+
+
+class SpecialistRunDispatch(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    run_id: UUID
+    agent_id: UUID
+    agent_name: str
+    correlation_id: str
+    mode: str = "analysis_only"
+    status: str = "queued"
+
+
 class AgentProposalStatus(str, Enum):
     PROPOSED = "proposed"
     MATERIALIZED = "materialized"
