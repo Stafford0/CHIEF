@@ -98,7 +98,7 @@ class ReconScoutCreate(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def require_evidence_target(self) -> "ReconScoutCreate":
+    def require_evidence_target(self) -> ReconScoutCreate:
         if not self.query and not self.seed_urls:
             raise ValueError("A RECON scout requires a query or at least one seed URL.")
         return self
@@ -150,7 +150,7 @@ class ReconScoutScheduleCreate(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_schedule(self) -> "ReconScoutScheduleCreate":
+    def validate_schedule(self) -> ReconScoutScheduleCreate:
         if not self.query and not self.seed_urls:
             raise ValueError("A RECON scout schedule requires a query or seed URL.")
         try:
