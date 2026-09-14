@@ -11,6 +11,7 @@ from chief.api.approvals import create_approvals_router
 from chief.api.browser import create_browser_router
 from chief.api.cofounder import create_cofounder_router
 from chief.api.integrations import create_integrations_router
+from chief.api.intelligence import create_intelligence_router
 from chief.api.models import create_models_router
 from chief.api.notification_delivery import create_notification_delivery_router
 from chief.api.operating import create_operating_router as _create_operating_router
@@ -32,7 +33,16 @@ from chief.integrations.parcelsignals import ParcelSignalsReadOnlyConnector
 from chief.integrations.registry import ConnectorRegistry
 from chief.integrations.schema import ConnectorCapability
 from chief.integrations.stripe import StripeReadOnlyConnector
+from chief.intelligence import (
+    AgentFactory,
+    NeuromapService,
+    SQLiteAgentProposalStore,
+    SpecialistOrchestrator,
+)
+from chief.models.ollama import OllamaProvider
+from chief.models.router import ModelRouter
 from chief.notifications.delivery import NotificationDispatcher, SMTPEmailProvider
+from chief.portfolio.store import SQLitePortfolioStore
 from chief.security.secrets import EncryptedSecretStore, SecretResolver
 from chief.tools.connector_write import ConnectorWriteTool
 from chief.tools.registry import create_standard_registry
@@ -45,6 +55,30 @@ def _sync_core_execution_setting(enabled: bool) -> None:
     settings = getattr(module, "settings", None) if module is not None else None
     if settings is not None:
         object.__setattr__(settings, "execution_enabled", bool(enabled))
+
+
+def _core_model_router(settings: Settings) -> ModelRouter:
+    """Use the live core router when composed by chief.core.app, otherwise fail local-first."""
+
+    module = sys.modules.get("chief.core.app")
+    router = getattr(module, "model_router", None) if module is not None else None
+    if isinstance(router, ModelRouter):
+        return router
+    provider = OllamaProvider(
+        model=settings.ollama_model,
+        base_url=settings.ollama_url,
+        timeout=settings.model_timeout_seconds,
+        max_response_bytes=settings.max_model_response_bytes,
+    )
+    return ModelRouter([provider])
+
+
+def _core_execution_enabled(default: bool) -> bool:
+    module = sys.modules.get("chief.core.app")
+    settings = getattr(module, "settings", None) if module is not None else None
+    if settings is None:
+        return bool(default)
+    return bool(getattr(settings, "execution_enabled", default))
 
 
 def _secret_components(database_path):
@@ -106,7 +140,8 @@ def create_operating_router(*args: Any, **kwargs: Any):
             initial_enabled=configured_execution_enabled,
         )
     persisted_execution = execution_control.get().enabled
-    _sync_core_execution_setting(configured_execution_enabled and persisted_execution)
+    effective_execution_enabled = configured_execution_enabled and persisted_execution
+    _sync_core_execution_setting(effective_execution_enabled)
 
     if secret_store is None:
         secret_store, secret_resolver = _secret_components(database_path)
@@ -225,6 +260,29 @@ def create_operating_router(*args: Any, **kwargs: Any):
     router.include_router(create_voice_router(coordinator_factory=voice_coordinator_factory))
     router.include_router(create_cofounder_router(database_path=database_path))
 
+    portfolio_store = SQLitePortfolioStore(database_path)
+    proposal_store = SQLiteAgentProposalStore(database_path)
+    agent_factory = AgentFactory(
+        portfolio_store=portfolio_store,
+        proposal_store=proposal_store,
+        tool_registry=tool_registry,
+    )
+    router.include_router(
+        create_intelligence_router(
+            neuromap_service=NeuromapService(
+                tool_registry=tool_registry,
+                model_router=_core_model_router(settings),
+                portfolio_store=portfolio_store,
+                execution_enabled=lambda: _core_execution_enabled(
+                    effective_execution_enabled
+                ),
+            ),
+            orchestrator=SpecialistOrchestrator(portfolio_store),
+            agent_factory=agent_factory,
+            record_change=kwargs.get("record_change"),
+        )
+    )
+
     if secret_store is not None:
         router.include_router(
             create_secrets_router(
@@ -240,6 +298,7 @@ __all__ = [
     "create_browser_router",
     "create_cofounder_router",
     "create_integrations_router",
+    "create_intelligence_router",
     "create_models_router",
     "create_notification_delivery_router",
     "create_operating_router",
