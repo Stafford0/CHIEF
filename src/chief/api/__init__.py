@@ -37,12 +37,16 @@ from chief.intelligence import (
     AgentFactory,
     NeuromapService,
     SpecialistOrchestrator,
+    SpecialistRunService,
     SQLiteAgentProposalStore,
+    SQLiteSpecialistDispatchStore,
 )
 from chief.models.ollama import OllamaProvider
+from chief.models.route_audit import SQLiteModelRouteStore
 from chief.models.router import ModelRouter
 from chief.notifications.delivery import NotificationDispatcher, SMTPEmailProvider
 from chief.portfolio.store import SQLitePortfolioStore
+from chief.runs import RunEngine, SQLiteRunStore
 from chief.security.secrets import EncryptedSecretStore, SecretResolver
 from chief.tools.connector_write import ConnectorWriteTool
 from chief.tools.registry import create_standard_registry
@@ -71,6 +75,18 @@ def _core_model_router(settings: Settings) -> ModelRouter:
         max_response_bytes=settings.max_model_response_bytes,
     )
     return ModelRouter([provider])
+
+
+def _core_run_plane(database_path: str | Path) -> tuple[SQLiteRunStore, RunEngine]:
+    """Use CHIEF's live durable worker when available; keep standalone composition usable."""
+
+    module = sys.modules.get("chief.core.app")
+    run_store = getattr(module, "run_store", None) if module is not None else None
+    run_engine = getattr(module, "run_engine", None) if module is not None else None
+    if isinstance(run_store, SQLiteRunStore) and isinstance(run_engine, RunEngine):
+        return run_store, run_engine
+    local_store = SQLiteRunStore(database_path)
+    return local_store, RunEngine(local_store)
 
 
 def _core_execution_enabled(default: bool) -> bool:
@@ -267,18 +283,31 @@ def create_operating_router(*args: Any, **kwargs: Any):
         proposal_store=proposal_store,
         tool_registry=tool_registry,
     )
+    orchestrator = SpecialistOrchestrator(portfolio_store)
+    model_router = _core_model_router(settings)
+    run_store, run_engine = _core_run_plane(database_path)
+    specialist_runs = SpecialistRunService(
+        portfolio_store=portfolio_store,
+        orchestrator=orchestrator,
+        run_store=run_store,
+        model_router=model_router,
+        dispatch_store=SQLiteSpecialistDispatchStore(database_path),
+        route_store=SQLiteModelRouteStore(database_path),
+    )
+    specialist_runs.register_handler(run_engine)
     router.include_router(
         create_intelligence_router(
             neuromap_service=NeuromapService(
                 tool_registry=tool_registry,
-                model_router=_core_model_router(settings),
+                model_router=model_router,
                 portfolio_store=portfolio_store,
                 execution_enabled=lambda: _core_execution_enabled(
                     effective_execution_enabled
                 ),
             ),
-            orchestrator=SpecialistOrchestrator(portfolio_store),
+            orchestrator=orchestrator,
             agent_factory=agent_factory,
+            specialist_runs=specialist_runs,
             record_change=kwargs.get("record_change"),
         )
     )
