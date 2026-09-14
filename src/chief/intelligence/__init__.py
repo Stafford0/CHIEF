@@ -1,0 +1,93 @@
+"""CHIEF self-knowledge, specialist routing, evidence, and governed agents."""
+
+from chief.intelligence.evidence import (
+    BraveSearchProvider,
+    ReconEvidenceBundle,
+    ReconEvidenceService,
+    SearchUnavailable,
+    build_recon_evidence_service,
+)
+from chief.intelligence.execution import (
+    SPECIALIST_ANALYSIS_ACTION,
+    SpecialistDispatchConflict,
+    SpecialistRunError,
+    SpecialistRunRoutingError,
+    SpecialistRunService,
+    SQLiteSpecialistDispatchStore,
+)
+from chief.intelligence.factory import (
+    AgentFactory,
+    AgentFactoryError,
+    AgentProposalNotFoundError,
+    AgentProposalStateError,
+    SQLiteAgentProposalStore,
+)
+from chief.intelligence.neuromap import NeuromapService
+from chief.intelligence.orchestrator import SpecialistOrchestrator
+from chief.intelligence.schema import (
+    AgentProposal,
+    AgentProposalCreate,
+    AgentProposalStatus,
+    AgentRouteDecision,
+    AgentRoutingRequest,
+    NeuromapSnapshot,
+    RoutingStatus,
+    SpecialistRunCreate,
+    SpecialistRunDispatch,
+)
+from chief.intelligence.scout import (
+    RECON_EVIDENCE_TOOL,
+    RECON_SCOUT_ACTION,
+    RECON_SCOUT_SCHEDULE_ACTION,
+    ReconScoutCreate,
+    ReconScoutDispatch,
+    ReconScoutDispatchConflict,
+    ReconScoutError,
+    ReconScoutRoutingError,
+    ReconScoutScheduleCreate,
+    ReconScoutScheduleView,
+    ReconScoutService,
+    SQLiteReconScoutDispatchStore,
+)
+
+__all__ = [
+    "RECON_EVIDENCE_TOOL",
+    "RECON_SCOUT_ACTION",
+    "RECON_SCOUT_SCHEDULE_ACTION",
+    "SPECIALIST_ANALYSIS_ACTION",
+    "AgentFactory",
+    "AgentFactoryError",
+    "AgentProposal",
+    "AgentProposalCreate",
+    "AgentProposalNotFoundError",
+    "AgentProposalStateError",
+    "AgentProposalStatus",
+    "AgentRouteDecision",
+    "AgentRoutingRequest",
+    "BraveSearchProvider",
+    "NeuromapService",
+    "NeuromapSnapshot",
+    "ReconEvidenceBundle",
+    "ReconEvidenceService",
+    "ReconScoutCreate",
+    "ReconScoutDispatch",
+    "ReconScoutDispatchConflict",
+    "ReconScoutError",
+    "ReconScoutRoutingError",
+    "ReconScoutScheduleCreate",
+    "ReconScoutScheduleView",
+    "ReconScoutService",
+    "RoutingStatus",
+    "SQLiteAgentProposalStore",
+    "SQLiteReconScoutDispatchStore",
+    "SQLiteSpecialistDispatchStore",
+    "SearchUnavailable",
+    "SpecialistDispatchConflict",
+    "SpecialistOrchestrator",
+    "SpecialistRunCreate",
+    "SpecialistRunDispatch",
+    "SpecialistRunError",
+    "SpecialistRunRoutingError",
+    "SpecialistRunService",
+    "build_recon_evidence_service",
+]
